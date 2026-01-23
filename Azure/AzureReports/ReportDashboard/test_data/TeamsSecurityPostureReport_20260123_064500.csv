@@ -1,0 +1,11 @@
+TeamName,TeamId,Visibility,GuestAccessEnabled,ExternalSharingEnabled,MemberCount,GuestCount,OwnerCount,RiskLevel,SecurityScore,CreatedDate
+Executive Leadership,a1b2c3d4-e5f6-7890-abcd-ef1234567890,Private,No,No,12,0,3,Low,100,2024-01-15
+Marketing Team,b2c3d4e5-f6a7-8901-bcde-f12345678901,Public,Yes,Yes,45,12,4,High,45,2023-06-20
+IT Operations,c3d4e5f6-a7b8-9012-cdef-123456789012,Private,Yes,No,28,3,5,Medium,75,2023-09-10
+Sales East Region,d4e5f6a7-b8c9-0123-def1-234567890123,Private,No,No,22,0,2,Low,100,2024-02-01
+Customer Support,e5f6a7b8-c9d0-1234-ef12-345678901234,Public,Yes,Yes,67,25,3,Critical,25,2023-03-15
+Finance Department,f6a7b8c9-d0e1-2345-f123-456789012345,Private,No,No,15,0,4,Low,100,2024-01-05
+Product Development,a7b8c9d0-e1f2-3456-1234-567890123456,Private,Yes,No,38,5,6,Medium,80,2023-11-20
+HR Team,b8c9d0e1-f2a3-4567-2345-678901234567,Private,No,No,10,0,2,Low,100,2024-03-01
+Engineering,c9d0e1f2-a3b4-5678-3456-789012345678,Public,Yes,Yes,89,18,7,High,50,2023-05-12
+Legal Department,d0e1f2a3-b4c5-6789-4567-890123456789,Private,No,No,8,0,3,Low,100,2024-02-15

@@ -1,0 +1,11 @@
+SkuPartNumber,LicenseName,TotalLicenses,AssignedLicenses,AvailableLicenses,UtilizationPercent,Status,MonthlyCost,AnnualCost,Recommendation
+ENTERPRISEPACK,Office 365 E3,250,245,5,98,Optimal,5000.00,60000.00,Well utilized - consider adding more
+SPE_E5,Microsoft 365 E5,100,65,35,65,Under-utilized,3500.00,42000.00,Review if all licenses needed
+POWER_BI_PRO,Power BI Pro,50,48,2,96,Optimal,500.00,6000.00,Well utilized
+FLOW_FREE,Power Automate Free,500,125,375,25,Under-utilized,0.00,0.00,Consider removing unused licenses
+PROJECTPREMIUM,Project Plan 5,25,8,17,32,Poor,750.00,9000.00,High waste - remove 15 licenses
+VISIOCLIENT,Visio Plan 2,30,29,1,97,Optimal,450.00,5400.00,Nearly full - consider adding more
+EMS,Enterprise Mobility + Security E3,250,240,10,96,Optimal,1750.00,21000.00,Well utilized
+TEAMS_EXPLORATORY,Teams Exploratory,75,15,60,20,Poor,0.00,0.00,Remove unused trial licenses
+ATP_ENTERPRISE,Defender for Office 365 (Plan 1),250,250,0,100,Critical,625.00,7500.00,Fully utilized - purchase more immediately
+EXCHANGEENTERPRISE,Exchange Online (Plan 2),200,185,15,93,Good,800.00,9600.00,Good utilization

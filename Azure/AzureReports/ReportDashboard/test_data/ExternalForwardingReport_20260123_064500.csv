@@ -1,0 +1,11 @@
+UserPrincipalName,DisplayName,ForwardingEnabled,ForwardingAddress,ForwardingType,RiskLevel,SecurityScore,CreatedDate,LastModified,Department
+sarah.jones@contoso.com,Sarah Jones,Yes,personal.email@gmail.com,InboxRule,Critical,10,2025-11-15,2026-01-10,Finance
+michael.brown@contoso.com,Michael Brown,Yes,mbrown@competitor.com,InboxRule,Critical,5,2025-12-01,2025-12-01,Sales
+karen.miller@contoso.com,Karen Miller,No,,,None,100,2024-03-20,,HR
+robert.davis@contoso.com,Robert Davis,Yes,robert.external@yahoo.com,InboxRule,High,25,2025-10-22,2026-01-15,IT
+jennifer.wilson@contoso.com,Jennifer Wilson,No,,,None,100,2024-01-10,,Marketing
+david.moore@contoso.com,David Moore,Yes,dmoore@gmail.com,Transport Rule,High,30,2025-09-18,2025-09-18,Operations
+patricia.taylor@contoso.com,Patricia Taylor,No,,,None,100,2023-11-05,,Finance
+christopher.anderson@contoso.com,Christopher Anderson,Yes,chris.personal@outlook.com,InboxRule,Medium,55,2024-08-12,2026-01-20,IT
+linda.thomas@contoso.com,Linda Thomas,No,,,None,100,2024-06-15,,Sales
+daniel.jackson@contoso.com,Daniel Jackson,Yes,djackson@partner.com,Transport Rule,Medium,60,2025-05-20,2025-05-20,Marketing

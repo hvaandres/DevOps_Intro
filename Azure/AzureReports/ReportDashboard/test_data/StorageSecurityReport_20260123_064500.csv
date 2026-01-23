@@ -1,0 +1,11 @@
+StorageAccountName,ResourceGroup,Location,HTTPSOnly,MinimumTLSVersion,AllowBlobPublicAccess,NetworkRuleSet,RiskLevel,SecurityScore,Recommendation
+prodstorageacct001,rg-production-east,eastus,True,TLS1_2,False,DefaultAction: Deny,Low,95,Configuration follows best practices
+devstorageacct002,rg-development,westus,False,TLS1_0,True,DefaultAction: Allow,Critical,15,Enable HTTPS-only; Update TLS to 1.2; Disable public blob access
+teststorageacct003,rg-testing,centralus,True,TLS1_2,True,DefaultAction: Allow,High,45,Disable public blob access; Configure network rules
+backupstorage004,rg-backup,eastus2,True,TLS1_1,False,DefaultAction: Deny,Medium,70,Update TLS version to 1.2
+datastorageacct005,rg-data-analytics,westus2,True,TLS1_2,False,DefaultAction: Deny,Low,100,Excellent security configuration
+logstorage006,rg-logging,northeurope,False,TLS1_0,True,DefaultAction: Allow,Critical,20,Multiple security issues detected
+appstorage007,rg-applications,southeastasia,True,TLS1_2,True,DefaultAction: Deny,Medium,75,Consider disabling public blob access
+mediatorage008,rg-media,japaneast,True,TLS1_1,True,DefaultAction: Allow,High,50,Update TLS; Configure network restrictions
+archivestorage009,rg-archive,uksouth,True,TLS1_2,False,DefaultAction: Deny,Low,98,Good configuration
+tempstorage010,rg-temporary,australiaeast,False,TLS1_0,True,DefaultAction: Allow,Critical,10,Critical security gaps across all settings

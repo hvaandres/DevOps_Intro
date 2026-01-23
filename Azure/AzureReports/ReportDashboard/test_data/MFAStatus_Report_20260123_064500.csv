@@ -1,0 +1,16 @@
+UserPrincipalName,DisplayName,MFAStatus,DefaultMFAMethod,MFAMethods,RiskLevel,SecurityScore,LastSignIn,Department
+john.doe@contoso.com,John Doe,Enabled,Microsoft Authenticator App,App;SMS,Low,95,2026-01-22,IT
+jane.smith@contoso.com,Jane Smith,Disabled,,None,Critical,25,2026-01-20,Finance
+bob.wilson@contoso.com,Bob Wilson,Enabled,Phone Call,Phone;SMS,Low,90,2026-01-23,Sales
+alice.brown@contoso.com,Alice Brown,Conditional,SMS,SMS,Medium,65,2026-01-21,HR
+charlie.davis@contoso.com,Charlie Davis,Enabled,Microsoft Authenticator App,App;Phone,Low,98,2026-01-23,IT
+mary.johnson@contoso.com,Mary Johnson,Disabled,,None,Critical,20,2026-01-15,Marketing
+david.lee@contoso.com,David Lee,Enabled,Microsoft Authenticator App,App,Low,92,2026-01-22,Operations
+sarah.martinez@contoso.com,Sarah Martinez,Conditional,SMS,SMS,Medium,70,2026-01-23,Finance
+mike.anderson@contoso.com,Mike Anderson,Disabled,,None,High,35,2025-12-10,Sales
+lisa.taylor@contoso.com,Lisa Taylor,Enabled,Microsoft Authenticator App,App;Phone;SMS,Low,100,2026-01-23,IT
+tom.white@contoso.com,Tom White,Enabled,Phone Call,Phone,Low,85,2026-01-22,HR
+emma.garcia@contoso.com,Emma Garcia,Conditional,SMS,SMS,Medium,68,2026-01-21,Marketing
+james.thomas@contoso.com,James Thomas,Disabled,,None,Critical,15,2025-11-30,Operations
+olivia.jackson@contoso.com,Olivia Jackson,Enabled,Microsoft Authenticator App,App;SMS,Low,94,2026-01-23,Finance
+william.harris@contoso.com,William Harris,Enabled,Microsoft Authenticator App,App,Low,96,2026-01-22,IT

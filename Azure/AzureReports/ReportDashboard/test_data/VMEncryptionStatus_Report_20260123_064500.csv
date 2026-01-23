@@ -1,0 +1,13 @@
+VMName,ResourceGroup,Location,OSType,OSDiskEncrypted,DataDisksEncrypted,EncryptionMethod,KeyVaultName,RiskLevel,SecurityScore,PowerState
+vm-prod-web-01,rg-production-web,eastus,Linux,Yes,Yes,Azure Disk Encryption,kv-prod-encryption,Low,100,Running
+vm-prod-app-01,rg-production-app,eastus,Windows,Yes,Yes,Azure Disk Encryption,kv-prod-encryption,Low,100,Running
+vm-dev-test-01,rg-development,westus,Linux,No,No,None,,Critical,0,Running
+vm-prod-db-01,rg-production-db,eastus,Linux,Yes,Yes,Server-Side Encryption,kv-prod-encryption,Low,95,Running
+vm-test-app-01,rg-testing,centralus,Windows,Yes,No,Azure Disk Encryption,kv-test-keys,High,50,Running
+vm-prod-web-02,rg-production-web,eastus,Windows,Yes,Yes,Azure Disk Encryption,kv-prod-encryption,Low,100,Stopped
+vm-staging-app-01,rg-staging,westus2,Linux,No,Yes,None,,High,40,Running
+vm-prod-cache-01,rg-production-cache,eastus2,Linux,Yes,Yes,Azure Disk Encryption,kv-prod-encryption,Low,100,Running
+vm-dev-build-01,rg-development,westus,Windows,No,No,None,,Critical,0,Running
+vm-prod-api-01,rg-production-api,eastus,Linux,Yes,Yes,Server-Side Encryption,kv-prod-encryption,Low,98,Running
+vm-backup-srv-01,rg-backup,northeurope,Windows,Yes,No,Azure Disk Encryption,kv-backup-keys,Medium,65,Running
+vm-test-web-01,rg-testing,centralus,Linux,No,Yes,None,,High,45,Stopped

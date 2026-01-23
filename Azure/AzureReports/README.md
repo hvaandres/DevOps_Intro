@@ -85,8 +85,8 @@ Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All"
 1. **Launch the Dashboard**
    - Open `dashboard.html` in your web browser
 
-2. **Select Your Language**
-   - Choose between Bash, PowerShell, or Python at the top
+2. **Select Sccript**
+   - At this moment everything is in powershell
 
 3. **Browse Security Categories**
    - Click on any category in the left sidebar to expand
@@ -181,26 +181,6 @@ Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All"
 - **Storage Usage**: Monitor storage consumption
 - **OneDrive Sharing Links**: Detect external sharing
 
-## 🛠️ Configuration Management
-
-Use the **Configuration & Credential Setup** script to:
-
-1. **Create Service Principal**
-   - Automates SP creation
-   - Assigns appropriate roles
-
-2. **Store Credentials Securely**
-   - Uses OS keyring/credential manager
-   - Supports macOS Keychain, Windows Credential Manager
-
-3. **Configure Export Paths**
-   - Set default report locations
-   - Organize audit results
-
-4. **Enable Auto-Connect**
-   - Streamline authentication
-   - Reduce manual login steps
-
 ## 📁 Report Outputs
 
 All scripts generate CSV reports with timestamps:
@@ -233,7 +213,6 @@ Solution: Ensure you have the required roles and scopes
 **Authentication Failures**
 ```
 Solution: Re-authenticate or check service principal
-- Bash/Python: Run 'az login'
 - PowerShell: Run 'Connect-AzAccount' and 'Connect-MgGraph'
 ```
 
@@ -244,40 +223,7 @@ Install-Module -Name Az -Force
 Install-Module -Name Microsoft.Graph -Force
 ```
 
-**Import Errors (Python)**
-```
-Solution: Install required packages
-pip install azure-identity azure-mgmt-storage msgraph-sdk
-```
 
-## 🤝 Contributing
-
-Feel free to extend this dashboard with additional scripts:
-
-1. Add script definitions to `scripts.js`
-2. Include all three language implementations
-3. Update the sidebar navigation
-4. Test thoroughly before committing
-
-## 📝 Script Template
-
-When adding new scripts, use this structure:
-
-```javascript
-'script-id': {
-    title: '🔒 Script Title',
-    description: 'Brief description of what the script does',
-    requirements: ['Requirement 1', 'Requirement 2'],
-    bash: `#!/bin/bash
-    # Your bash script here
-    `,
-    powershell: `# Your PowerShell script here
-    `,
-    python: `#!/usr/bin/env python3
-    # Your Python script here
-    `
-}
-```
 
 ## 🔐 Required Permissions
 

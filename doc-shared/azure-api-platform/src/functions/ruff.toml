@@ -1,0 +1,9 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "I", "S", "B", "UP"]
+ignore = ["S608"]  # SQL injection — we use allowlists
+
+[lint.per-file-ignores]
+"tests/**" = ["S101", "S105"]  # Allow assert and test tokens in tests

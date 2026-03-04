@@ -1,0 +1,25 @@
+<!--
+  Rate Limiting Policy Fragment
+  Can be applied at global, product, API, or operation level.
+
+  Strategies:
+  1. By subscription key (primary) — 100 calls/min
+  2. By IP address (fallback for unauthenticated probes)
+  3. Quota per subscription — 10,000 calls/day
+-->
+<fragment>
+  <!-- Per-minute rate limit -->
+  <rate-limit-by-key
+    calls="100"
+    renewal-period="60"
+    counter-key="@(context.Subscription?.Key ?? context.Request.IpAddress)"
+    increment-condition="@(context.Response.StatusCode >= 200 && context.Response.StatusCode < 300)"
+    retry-after-header-name="Retry-After"
+    retry-after-variable-name="retry-after" />
+
+  <!-- Daily quota per subscription -->
+  <quota-by-key
+    calls="10000"
+    renewal-period="86400"
+    counter-key="@(context.Subscription?.Key ?? &quot;anonymous&quot;)" />
+</fragment>

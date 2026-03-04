@@ -1,0 +1,34 @@
+<!--
+  JWT Validation Policy Fragment
+  Can be included in API-level or operation-level policies.
+  Uses Entra ID (Azure AD) OpenID Connect discovery.
+-->
+<fragment>
+  <validate-jwt header-name="Authorization"
+                failed-validation-httpcode="401"
+                failed-validation-error-message="Unauthorized: Invalid or missing JWT token"
+                require-scheme="Bearer"
+                output-token-variable-name="jwt-token">
+
+    <!-- Entra ID OpenID Connect metadata -->
+    <openid-config url="https://login.microsoftonline.com/{{tenant-id}}/v2.0/.well-known/openid-configuration" />
+
+    <!-- Expected audience (App Registration Application ID URI) -->
+    <audiences>
+      <audience>{{api-audience}}</audience>
+    </audiences>
+
+    <!-- Accepted token issuers -->
+    <issuers>
+      <issuer>https://sts.windows.net/{{tenant-id}}/</issuer>
+      <issuer>https://login.microsoftonline.com/{{tenant-id}}/v2.0</issuer>
+    </issuers>
+
+    <!-- Required claims for data access -->
+    <required-claims>
+      <claim name="roles" match="any">
+        <value>Data.Read</value>
+      </claim>
+    </required-claims>
+  </validate-jwt>
+</fragment>

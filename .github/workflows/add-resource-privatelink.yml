@@ -1,0 +1,345 @@
+###############################################################################
+# Add Resource — Private Link Network
+#
+# Manual workflow that lets teams add ANY COMBINATION of:
+#   - A Private DNS Zone
+#   - One or more Private DNS A Records
+#   - A Spoke VNet Peering
+#
+# Each section is independent. Teams can add just a DNS zone, just records,
+# just a spoke, or all three at once. Nothing is applied — a PR is opened.
+###############################################################################
+
+name: "Add Resource — Private Link Network"
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      # =============================================================
+      # DNS ZONE (optional)
+      # =============================================================
+      add_dns_zone:
+        description: "Add a Private DNS Zone?"
+        required: true
+        type: choice
+        default: "no"
+        options:
+          - "no"
+          - "yes"
+      zone_key:
+        description: "DNS Zone — Logical key (e.g. 'cosmosdb', 'redis'). Only if adding a zone."
+        required: false
+        type: string
+      zone_suffix:
+        description: "DNS Zone — After 'privatelink.' (e.g. 'documents.azure.com'). Only if adding a zone."
+        required: false
+        type: string
+
+      # =============================================================
+      # DNS RECORDS (optional, supports multiple via JSON)
+      # =============================================================
+      add_dns_records:
+        description: "Add Private DNS A Record(s)?"
+        required: true
+        type: choice
+        default: "no"
+        options:
+          - "no"
+          - "yes"
+      dns_records_json:
+        description: 'Records JSON, e.g. [{"key":"stor1","zone":"privatelink.blob.core.windows.net","name":"mystorage","ips":"10.0.1.5"}]'
+        required: false
+        type: string
+
+      # =============================================================
+      # SPOKE / VNET PEERING (optional)
+      # =============================================================
+      add_spoke:
+        description: "Add a Spoke VNet Peering?"
+        required: true
+        type: choice
+        default: "no"
+        options:
+          - "no"
+          - "yes"
+      spoke_key:
+        description: "Spoke — Logical name (e.g. 'spoke-prod'). Only if adding a spoke."
+        required: false
+        type: string
+      spoke_vnet_id:
+        description: "Spoke — VNet resource ID. Only if adding a spoke."
+        required: false
+        type: string
+      spoke_vnet_name:
+        description: "Spoke — VNet name. Only if adding a spoke."
+        required: false
+        type: string
+      spoke_rg:
+        description: "Spoke — Resource group name. Only if adding a spoke."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  TF_WORKING_DIR: terraform/Azure/tfm-privateLink-network
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  add-resource:
+    name: "Add Private Link Resources"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.9"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ---------------------------------------------------------------
+      # Validate — at least one thing selected, required fields present
+      # ---------------------------------------------------------------
+      - name: Validate inputs
+        env:
+          RECORDS_JSON: ${{ github.event.inputs.dns_records_json }}
+        run: |
+          ADD_ZONE="${{ github.event.inputs.add_dns_zone }}"
+          ADD_RECORDS="${{ github.event.inputs.add_dns_records }}"
+          ADD_SPOKE="${{ github.event.inputs.add_spoke }}"
+
+          if [ "$ADD_ZONE" = "no" ] && [ "$ADD_RECORDS" = "no" ] && [ "$ADD_SPOKE" = "no" ]; then
+            echo "::error::Nothing selected. Set at least one toggle to 'yes'."
+            exit 1
+          fi
+
+          CHANGES=""
+
+          # DNS Zone
+          if [ "$ADD_ZONE" = "yes" ]; then
+            if [ -z "${{ github.event.inputs.zone_key }}" ]; then
+              echo "::error::DNS Zone toggled 'yes' but 'zone_key' is empty."
+              exit 1
+            fi
+            if [ -z "${{ github.event.inputs.zone_suffix }}" ]; then
+              echo "::error::DNS Zone toggled 'yes' but 'zone_suffix' is empty."
+              exit 1
+            fi
+            echo "📌 DNS zone: ${{ github.event.inputs.zone_key }} = privatelink.${{ github.event.inputs.zone_suffix }}"
+            CHANGES="${CHANGES}dns-zone, "
+          fi
+
+          # DNS Records
+          if [ "$ADD_RECORDS" = "yes" ]; then
+            if [ -z "$RECORDS_JSON" ]; then
+              echo "::error::DNS Records toggled 'yes' but 'dns_records_json' is empty."
+              exit 1
+            fi
+            echo "$RECORDS_JSON" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              if not isinstance(data, list) or len(data) == 0:
+                  print('::error::dns_records_json must be a non-empty JSON array.')
+                  sys.exit(1)
+              required = ['key', 'zone', 'name', 'ips']
+              for i, r in enumerate(data):
+                  missing = [f for f in required if f not in r or not r[f]]
+                  if missing:
+                      print(f'::error::Record [{i}] is missing required fields: {missing}')
+                      sys.exit(1)
+                  if not r['zone'].startswith('privatelink.'):
+                      print(f'::error::Record [{i}] zone must start with privatelink. — got: {r[\"zone\"]}')
+                      sys.exit(1)
+              print(f'📌 DNS records: {len(data)} record(s) validated')
+          except json.JSONDecodeError as e:
+              print(f'::error::dns_records_json is not valid JSON: {e}')
+              sys.exit(1)
+          "
+            RECORD_COUNT=$(echo "$RECORDS_JSON" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+            CHANGES="${CHANGES}dns-records(${RECORD_COUNT}), "
+          fi
+
+          # Spoke
+          if [ "$ADD_SPOKE" = "yes" ]; then
+            for field in spoke_key spoke_vnet_id spoke_vnet_name spoke_rg; do
+              val=""
+              case $field in
+                spoke_key)      val="${{ github.event.inputs.spoke_key }}" ;;
+                spoke_vnet_id)  val="${{ github.event.inputs.spoke_vnet_id }}" ;;
+                spoke_vnet_name) val="${{ github.event.inputs.spoke_vnet_name }}" ;;
+                spoke_rg)       val="${{ github.event.inputs.spoke_rg }}" ;;
+              esac
+              if [ -z "$val" ]; then
+                echo "::error::Spoke toggled 'yes' but '${field}' is empty."
+                exit 1
+              fi
+            done
+            echo "📌 Spoke: ${{ github.event.inputs.spoke_key }} (${{ github.event.inputs.spoke_vnet_name }})"
+            CHANGES="${CHANGES}spoke, "
+          fi
+
+          CHANGES="${CHANGES%, }"
+          echo "CHANGES=${CHANGES}" >> "$GITHUB_ENV"
+          echo "✅ Validation passed. Adding: ${CHANGES}"
+
+      # ---------------------------------------------------------------
+      # Apply each section independently
+      # ---------------------------------------------------------------
+      - name: Add DNS Zone
+        if: github.event.inputs.add_dns_zone == 'yes'
+        run: |
+          python3 scripts/update-tfvars.py dns-zone \
+            --key "${{ github.event.inputs.zone_key }}" \
+            --zone "privatelink.${{ github.event.inputs.zone_suffix }}"
+
+      - name: Add DNS Records
+        if: github.event.inputs.add_dns_records == 'yes'
+        env:
+          RECORDS_JSON: ${{ github.event.inputs.dns_records_json }}
+        run: |
+          python3 scripts/update-tfvars.py batch-records --json "$RECORDS_JSON"
+
+      - name: Add Spoke
+        if: github.event.inputs.add_spoke == 'yes'
+        run: |
+          python3 scripts/update-tfvars.py spoke \
+            --key "${{ github.event.inputs.spoke_key }}" \
+            --vnet-id "${{ github.event.inputs.spoke_vnet_id }}" \
+            --vnet-name "${{ github.event.inputs.spoke_vnet_name }}" \
+            --rg "${{ github.event.inputs.spoke_rg }}"
+
+      - name: Show changes
+        run: |
+          echo "=== terraform.tfvars diff ==="
+          git diff terraform.tfvars || echo "(no diff — entries may already exist)"
+
+      # ---------------------------------------------------------------
+      # Terraform Plan
+      # ---------------------------------------------------------------
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}" \
+            -backend-config="key=privatelink-network.tfstate"
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false
+        continue-on-error: true
+
+      # ---------------------------------------------------------------
+      # Job Summary
+      # ---------------------------------------------------------------
+      - name: Write Job Summary
+        if: always()
+        env:
+          RECORDS_JSON: ${{ github.event.inputs.dns_records_json }}
+        run: |
+          PLAN_STATUS="${{ steps.plan.outcome }}"
+
+          if [ "$PLAN_STATUS" = "success" ]; then
+            ICON="✅"; MSG="Plan succeeded — changes are valid and ready for review."
+          else
+            ICON="❌"; MSG="Plan failed — review the errors in the workflow logs."
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << HEADER
+          ## ${ICON} Add Resource — Private Link Network
+
+          **Triggered by:** @${{ github.actor }}
+          **Resources:** \`${{ env.CHANGES }}\`
+          **Plan status:** ${MSG}
+
+          > ⚠️ **Nothing has been applied.** Changes are ephemeral until the PR is merged and \`terraform apply\` is run.
+
+          ---
+          HEADER
+
+          # DNS Zone section
+          if [ "${{ github.event.inputs.add_dns_zone }}" = "yes" ]; then
+            cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ### Private DNS Zone
+          | Field | Value |
+          |-------|-------|
+          | Key | \`${{ github.event.inputs.zone_key }}\` |
+          | Zone | \`privatelink.${{ github.event.inputs.zone_suffix }}\` |
+
+          EOF
+          fi
+
+          # DNS Records section
+          if [ "${{ github.event.inputs.add_dns_records }}" = "yes" ]; then
+            echo "### Private DNS A Records" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Key | Record | Zone | IPs | TTL |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|-----|--------|------|-----|-----|" >> "$GITHUB_STEP_SUMMARY"
+            echo "$RECORDS_JSON" | python3 -c "
+          import sys, json
+          for r in json.load(sys.stdin):
+              ttl = r.get('ttl', 300)
+              print(f'| \`{r[\"key\"]}\` | \`{r[\"name\"]}\` | \`{r[\"zone\"]}\` | \`{r[\"ips\"]}\` | {ttl} |')
+          " >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Spoke section
+          if [ "${{ github.event.inputs.add_spoke }}" = "yes" ]; then
+            cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ### Spoke VNet Peering
+          | Field | Value |
+          |-------|-------|
+          | Key | \`${{ github.event.inputs.spoke_key }}\` |
+          | VNet | \`${{ github.event.inputs.spoke_vnet_name }}\` |
+          | Resource Group | \`${{ github.event.inputs.spoke_rg }}\` |
+
+          EOF
+          fi
+
+      # ---------------------------------------------------------------
+      # Create PR (only if plan succeeded)
+      # ---------------------------------------------------------------
+      - name: Create Pull Request
+        if: steps.plan.outcome == 'success'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "feat(privatelink): add ${{ env.CHANGES }} via workflow"
+          branch: "auto/privatelink-${{ github.run_number }}"
+          title: "🔗 Add Private Link resources (${{ env.CHANGES }})"
+          body: |
+            ## Automated Resource Addition
+
+            **Triggered by:** @${{ github.actor }}
+            **Resources:** `${{ env.CHANGES }}`
+
+            ${{ github.event.inputs.add_dns_zone == 'yes' && format('### DNS Zone\n- **Key:** `{0}`\n- **Zone:** `privatelink.{1}`\n', github.event.inputs.zone_key, github.event.inputs.zone_suffix) || '' }}
+            ${{ github.event.inputs.add_dns_records == 'yes' && '### DNS Records\nSee the `terraform.tfvars` diff for record details.\n' || '' }}
+            ${{ github.event.inputs.add_spoke == 'yes' && format('### Spoke\n- **Key:** `{0}`\n- **VNet:** `{1}` in `{2}`\n', github.event.inputs.spoke_key, github.event.inputs.spoke_vnet_name, github.event.inputs.spoke_rg) || '' }}
+
+            ### Status
+            ✅ `terraform plan` succeeded — all changes are valid.
+
+            > ⚠️ **Merging this PR does NOT apply changes.** Run `terraform apply` after merge.
+
+          labels: |
+            terraform
+            privatelink
+            automated

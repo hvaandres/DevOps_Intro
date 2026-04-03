@@ -1,0 +1,192 @@
+###############################################################################
+# CI Pipeline — Private Link Network Module
+#
+# Runs on every push/PR that touches the module files.
+# Validates formatting, runs terraform plan, and posts a readable report.
+###############################################################################
+
+name: "CI — Private Link Network"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/Azure/tfm-privateLink-network/**"
+      - ".github/workflows/ci-privatelink-network.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/Azure/tfm-privateLink-network/**"
+      - ".github/workflows/ci-privatelink-network.yml"
+
+permissions:
+  contents: read
+  pull-requests: write  # needed to post plan as PR comment
+
+env:
+  TF_WORKING_DIR: terraform/Azure/tfm-privateLink-network
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  terraform-ci:
+    name: "Terraform Plan & Report"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      # ---------------------------------------------------------------
+      # Setup
+      # ---------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.9"
+          terraform_wrapper: true  # enables stdout capture for plan
+
+      # ---------------------------------------------------------------
+      # Format Check
+      # ---------------------------------------------------------------
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -recursive -check -diff
+        continue-on-error: true
+
+      # ---------------------------------------------------------------
+      # Init
+      # ---------------------------------------------------------------
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}" \
+            -backend-config="key=privatelink-network.tfstate"
+
+      # ---------------------------------------------------------------
+      # Validate
+      # ---------------------------------------------------------------
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      # ---------------------------------------------------------------
+      # Plan
+      # ---------------------------------------------------------------
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false -out=tfplan
+        continue-on-error: true
+
+      - name: Terraform Show (readable plan)
+        id: show
+        run: terraform show -no-color tfplan
+        continue-on-error: true
+
+      # ---------------------------------------------------------------
+      # Report — PR Comment
+      # ---------------------------------------------------------------
+      - name: Post Plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fmt = '${{ steps.fmt.outcome }}';
+            const init = '${{ steps.init.outcome }}';
+            const validate = '${{ steps.validate.outcome }}';
+            const plan = '${{ steps.plan.outcome }}';
+            const show = `${{ steps.show.outputs.stdout }}`;
+
+            const icon = (s) => s === 'success' ? '✅' : '❌';
+
+            // Truncate plan if too long for a comment (max ~65k chars)
+            const maxLen = 60000;
+            const planOutput = show.length > maxLen
+              ? show.substring(0, maxLen) + '\n\n... (truncated, see job summary for full output)'
+              : show;
+
+            const body = `## 🔍 Terraform Plan Report — Private Link Network
+
+            | Step | Status |
+            |------|--------|
+            | Format | ${icon(fmt)} \`${fmt}\` |
+            | Init | ${icon(init)} \`${init}\` |
+            | Validate | ${icon(validate)} \`${validate}\` |
+            | Plan | ${icon(plan)} \`${plan}\` |
+
+            <details><summary>📋 Plan Output (click to expand)</summary>
+
+            \`\`\`hcl
+            ${planOutput}
+            \`\`\`
+
+            </details>
+
+            > *Pushed by @${{ github.actor }} · Workflow: \`${{ github.workflow }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      # ---------------------------------------------------------------
+      # Report — Job Summary (always, for push and PR)
+      # ---------------------------------------------------------------
+      - name: Write Job Summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## 🔍 Terraform Plan Report — Private Link Network
+
+          | Step | Status |
+          |------|--------|
+          | Format | `${{ steps.fmt.outcome }}` |
+          | Init | `${{ steps.init.outcome }}` |
+          | Validate | `${{ steps.validate.outcome }}` |
+          | Plan | `${{ steps.plan.outcome }}` |
+
+          ### Plan Output
+          ```
+          ${{ steps.show.outputs.stdout }}
+          ```
+
+          > This report shows what Terraform **would** change. No resources were modified.
+          > Review carefully — new resources are ephemeral until `terraform apply` is run.
+          EOF
+
+      # ---------------------------------------------------------------
+      # Fail if any step failed
+      # ---------------------------------------------------------------
+      - name: Check Results
+        if: always()
+        run: |
+          echo "Format:   ${{ steps.fmt.outcome }}"
+          echo "Init:     ${{ steps.init.outcome }}"
+          echo "Validate: ${{ steps.validate.outcome }}"
+          echo "Plan:     ${{ steps.plan.outcome }}"
+
+          if [ "${{ steps.fmt.outcome }}" != "success" ]; then
+            echo "::error::Terraform formatting check failed. Run 'terraform fmt -recursive' locally."
+          fi
+          if [ "${{ steps.validate.outcome }}" != "success" ]; then
+            echo "::error::Terraform validation failed."
+          fi
+          if [ "${{ steps.plan.outcome }}" != "success" ]; then
+            echo "::error::Terraform plan failed."
+          fi
+
+          # Fail the job if plan or validate failed (fmt is a warning)
+          if [ "${{ steps.validate.outcome }}" != "success" ] || [ "${{ steps.plan.outcome }}" != "success" ]; then
+            exit 1
+          fi

@@ -1,0 +1,29 @@
+# Terraform local directories
+.terraform/
+.terraform.lock.hcl
+
+# Plan files
+*.tfplan
+tfplan
+
+# State files (state lives in Azure Storage backend, never local)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files (local dev overrides)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI config
+.terraformrc
+terraform.rc
+
+# macOS
+.DS_Store

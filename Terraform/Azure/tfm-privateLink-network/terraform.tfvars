@@ -25,11 +25,11 @@ hub_resource_group_name = "rg-hub-networking"
 ###############################################################################
 
 private_dns_zones = {
-  blob      = "privatelink.blob.core.windows.net"
-  sql       = "privatelink.database.windows.net"
-  keyvault  = "privatelink.vaultcore.azure.net"
-  webapp    = "privatelink.azurewebsites.net"
-  staticapp = "privatelink.azurestaticapps.net"
+  ah-app1 = "privatelink.ahapp1.com"
+  ah-app2 = "privatelink.ahapp2.com"
+  ah-app3 = "privatelink.ahapp3.com"
+  ah-app4 = "privatelink.ahapp4.com"
+  ah-app5 = "privatelink.ahapp5.com"
 }
 
 ###############################################################################

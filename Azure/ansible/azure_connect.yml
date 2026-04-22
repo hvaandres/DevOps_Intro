@@ -1,0 +1,66 @@
+---
+- name: Connect to Azure with a Service Principal and test Blob Storage
+  hosts: azure
+  gather_facts: false
+
+  # The secrets live in an ansible-vault encrypted file at
+  # group_vars/azure_keys.yml. Run this playbook with --ask-vault-pass
+  # or --vault-password-file <path>.
+  vars_files:
+    - group_vars/azure_keys.yml
+
+  vars:
+    scripts_dir: "{{ playbook_dir }}/../scripts"
+    python_interpreter: "python3"
+
+    # Variables from the encrypted vault are exposed to the Python scripts
+    # as the same environment variables the scripts already expect.
+    azure_env:
+      AZURE_TENANT_ID: "{{ azure_tenant_id }}"
+      AZURE_CLIENT_ID: "{{ azure_client_id }}"
+      AZURE_CLIENT_SECRET: "{{ azure_client_secret }}"
+      AZURE_SUBSCRIPTION_ID: "{{ azure_subscription_id }}"
+      AZURE_STORAGE_ACCOUNT: "{{ azure_storage_account }}"
+      AZURE_STORAGE_CONTAINER: "{{ azure_storage_container | default('') }}"
+
+  tasks:
+    - name: Ensure required Python packages are installed
+      ansible.builtin.pip:
+        name:
+          - azure-identity
+          - azure-mgmt-resource
+          - azure-storage-blob
+          - python-dotenv
+        state: present
+        executable: pip3
+
+    - name: Verify that the connection scripts exist
+      ansible.builtin.stat:
+        path: "{{ scripts_dir }}/{{ item }}"
+      loop:
+        - connect_service_principal.py
+        - connect_blob_storage.py
+      register: script_stat
+      failed_when: not script_stat.stat.exists
+
+    - name: Authenticate to Azure using the Service Principal
+      ansible.builtin.command:
+        cmd: "{{ python_interpreter }} {{ scripts_dir }}/connect_service_principal.py"
+      environment: "{{ azure_env }}"
+      register: sp_result
+      changed_when: false
+
+    - name: Show Service Principal connection output
+      ansible.builtin.debug:
+        var: sp_result.stdout_lines
+
+    - name: Connect to Azure Blob Storage using the Service Principal
+      ansible.builtin.command:
+        cmd: "{{ python_interpreter }} {{ scripts_dir }}/connect_blob_storage.py"
+      environment: "{{ azure_env }}"
+      register: blob_result
+      changed_when: false
+
+    - name: Show Blob Storage connection output
+      ansible.builtin.debug:
+        var: blob_result.stdout_lines

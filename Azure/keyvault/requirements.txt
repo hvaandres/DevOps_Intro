@@ -1,0 +1,4 @@
+azure-identity>=1.17,<2
+azure-keyvault-secrets>=4.8,<5
+azure-mgmt-keyvault>=10,<14
+azure-mgmt-resource-subscriptions>=1,<2

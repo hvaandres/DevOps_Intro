@@ -1,0 +1,41 @@
+# Local environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Local configuration; sanitized templates remain trackable
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Service-principal credentials, private keys, and identity caches
+.azure/
+.credentials/
+credentials/
+*.pem
+*.pfx
+*.p12
+*.key
+*.jks
+*.keystore
+
+# Plaintext secret inputs/outputs and session metadata
+.secrets/
+secrets/
+secrets-input/
+secrets-output/
+reports/
+*.secret
+*.secret.*
+*.token
+*.token.*
+
+# Local diagnostics may contain sensitive resource metadata
+logs/
+*.log

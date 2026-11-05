@@ -1,0 +1,36 @@
+# Operating-system metadata
+.DS_Store
+._*
+Thumbs.db
+
+# Python environments, bytecode, and tooling caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+*.egg-info/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local configuration; only sanitized examples belong in Git
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Azure CLI authentication caches
+.azure/
+
+# Terraform working data and state can contain secret values.
+# Keep .terraform.lock.hcl versioned.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log

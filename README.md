@@ -40,7 +40,18 @@ Each project will be structured as follows:
 
 See the [Terraform Make command reference](Terraform/intro.md) for Azure login,
 subscription selection, permissions, and creating/testing a Terraform state
-backend. Start with `make -C Terraform help` from the repository root.
+backend. All targets run from the repository root without `-C`:
+
+```bash
+make help
+make azure-login
+make azure-subscription
+make resource-group-create SUBSCRIPTION_ID="<subscription UUID>" RESOURCE_GROUP=rg-my-test LOCATION=eastus2
+```
+
+The same entry point provides `make azure-permissions`, `make backend-create`,
+`make backend-test`, and `make test`. See the guide for required variables and
+confirmation details. Resource group creation needs no storage account.
 
 Deployment-specific documentation:
 - [Private Link networking](Terraform/Azure/tfm-privateLink-network/README.md)

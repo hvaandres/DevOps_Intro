@@ -81,7 +81,7 @@ You also need:
 For shared Make commands covering login, subscription selection, subscription
 permissions, and a standalone resource group/storage/tfstate backend test, see
 [Terraform setup](../../intro.md). From the repository root, run
-`make -C Terraform help`. That backend setup does not create hub/spoke VNets;
+`make help`. That backend setup does not create hub/spoke VNets;
 the networking setup below is separate.
 
 ### 1. Login to Azure

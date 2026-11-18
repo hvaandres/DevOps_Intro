@@ -43,6 +43,8 @@ elif prefix == "storage blob download":
 
 
 class AzureBootstrapTests(unittest.TestCase):
+    make_directory = ROOT.parent
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -70,10 +72,11 @@ class AzureBootstrapTests(unittest.TestCase):
             BACKEND_CONFIG=str(self.config),
         )
 
-    def run_target(self, target, success=True, stdin="", **overrides):
+    def run_target(self, target, success=True, stdin="", make_variables=(), **overrides):
         env = self.env | overrides
         result = subprocess.run(
-            ["make", "--no-print-directory", "-C", str(ROOT), target],
+            ["make", "--no-print-directory", target, *make_variables],
+            cwd=self.make_directory,
             env=env, input=stdin, text=True, capture_output=True, timeout=15,
         )
         if success:
@@ -103,6 +106,10 @@ class AzureBootstrapTests(unittest.TestCase):
         self.assertEqual(self.calls()[0][:1], ["login"])
         self.assertEqual(self.calls(("account", "set"))[0][-1], SUBSCRIPTION)
 
+    def test_failed_login_does_not_select_subscription(self):
+        self.run_target("azure-login", success=False, FAIL_PREFIX="login")
+        self.assertEqual(self.calls(("account",)), [])
+
     def test_subscription_name_can_be_selected_without_login(self):
         self.run_target("azure-subscription", SUBSCRIPTION_ID="My Dev Subscription")
         self.assertEqual(self.calls(("account", "set"))[0][-1], "My Dev Subscription")
@@ -113,9 +120,36 @@ class AzureBootstrapTests(unittest.TestCase):
         self.assertEqual(self.calls(("account", "set")), [])
 
     def test_mutations_require_explicit_subscription(self):
-        for target in ("azure-permissions", "backend-create", "backend-test"):
+        for target in ("azure-permissions", "resource-group-create", "backend-create", "backend-test"):
             self.run_target(target, success=False, SUBSCRIPTION_ID="")
         self.assertEqual(self.calls(), [])
+
+    def test_resource_group_create_needs_no_storage(self):
+        self.run_target("resource-group-create", STORAGE_ACCOUNT="", RESOURCE_GROUP="rg-only", LOCATION="westus2")
+        call = self.calls(("group", "create"))[0]
+        self.assertEqual(call[call.index("--name") + 1], "rg-only")
+        self.assertEqual(call[call.index("--location") + 1], "westus2")
+        self.assertEqual(self.calls(("storage",)), [])
+        self.assertEqual(self.calls(("role",)), [])
+        self.assertFalse(self.config.exists())
+        self.assert_scoped()
+
+    def test_resource_group_confirmation_precedes_creation(self):
+        self.run_target("resource-group-create", success=False, CONFIRM_SUBSCRIPTION="wrong")
+        self.assertEqual(self.calls(("group",)), [])
+
+    def test_resource_group_rejects_invalid_name(self):
+        self.run_target("resource-group-create", success=False, RESOURCE_GROUP="-invalid")
+        self.assertEqual(self.calls(("group",)), [])
+
+    def test_command_line_variables_override_environment(self):
+        self.run_target(
+            "resource-group-create", RESOURCE_GROUP="rg-environment",
+            make_variables=("RESOURCE_GROUP=rg-command-line", "LOCATION=westus2"),
+        )
+        call = self.calls(("group", "create"))[0]
+        self.assertEqual(call[call.index("--name") + 1], "rg-command-line")
+        self.assertEqual(call[call.index("--location") + 1], "westus2")
 
     def test_permissions_grant_all_four_roles(self):
         self.run_target("azure-permissions")
@@ -230,6 +264,12 @@ class AzureBootstrapTests(unittest.TestCase):
     def test_cleanup_failure_is_reported(self):
         result = self.run_target("backend-test", success=False, FAIL_PREFIX="storage blob delete")
         self.assertIn("Could not clean up temporary blob", result.stderr)
+
+
+class TerraformDirectoryTests(AzureBootstrapTests):
+    """Run the same checks inside Terraform/ to preserve existing usage."""
+
+    make_directory = ROOT
 
 
 if __name__ == "__main__":

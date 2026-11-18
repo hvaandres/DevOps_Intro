@@ -22,7 +22,7 @@ select_subscription() {
 case "$command_name" in
   azure-login) az login --output none; select_subscription; exit ;;
   azure-subscription) select_subscription; exit ;;
-  azure-permissions|backend-create|backend-test) ;;
+  azure-permissions|resource-group-create|backend-create|backend-test) ;;
   *) die "Unknown command: $command_name" ;;
 esac
 
@@ -78,14 +78,24 @@ if [[ "$command_name" == azure-permissions ]]; then
   exit
 fi
 
-require python3
 resource_group="${RESOURCE_GROUP:-rg-terraform-state-test}"
 location="${LOCATION:-eastus2}"
+[[ -n "$resource_group" && "$resource_group" != -* ]] || die 'Invalid resource group name.'
+
+if [[ "$command_name" == resource-group-create ]]; then
+  printf 'Resource group: %s\nLocation: %s\n' "$resource_group" "$location"
+  confirm 'Create/reuse this resource group only. No storage, container, or role assignments will be created.'
+  az group create --name "$resource_group" --location "$location" \
+    --subscription "$subscription" --output none
+  printf 'Resource group ready: %s\n' "$resource_group"
+  exit
+fi
+
+require python3
 account="${STORAGE_ACCOUNT:-}"
 container="${CONTAINER_NAME:-tfstate}"
 [[ "$account" =~ ^[a-z0-9]{3,24}$ ]] || die 'STORAGE_ACCOUNT must contain 3-24 lowercase letters/digits.'
 [[ "$container" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ && "$container" != *--* ]] || die 'Invalid container name.'
-[[ -n "$resource_group" && "$resource_group" != -* ]] || die 'Invalid resource group name.'
 printf 'Resource group: %s\nStorage account: %s\nContainer: %s\n' "$resource_group" "$account" "$container"
 
 retry() {

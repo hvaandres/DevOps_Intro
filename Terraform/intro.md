@@ -13,6 +13,7 @@ configuration is in `Azure/deployments/keyvault/providers.tf`.
 - [Help](#help)
 - [Login and subscription selection](#azure-login-and-azure-subscription)
 - [Subscription permissions](#azure-permissions)
+- [Resource group creation](#resource-group-create)
 - [Backend creation](#backend-create)
 - [Backend smoke test](#backend-test)
 - [Offline tests](#test)
@@ -55,17 +56,18 @@ The helper is invoked through Bash by Make; no `chmod` step is needed.
 
 ## Available commands
 
-Run these from the repository root. If already inside `Terraform/`, omit
-`-C Terraform`. These are all targets in `Terraform/Makefile`; other directories
-have independent Makefiles with their own commands.
+Run these directly from the repository root, without `-C`. The root `Makefile`
+includes `Terraform/Makefile`, so the same targets also work when you are inside
+`Terraform/`. Other project directories have independent Makefiles.
 
-- `make -C Terraform` or `make -C Terraform help`: print commands and defaults.
-- `make -C Terraform azure-login`: authenticate, list subscriptions, and select one.
-- `make -C Terraform azure-subscription`: select a subscription without logging in again.
-- `make -C Terraform azure-permissions`: confirm and grant subscription-wide roles.
-- `make -C Terraform backend-create`: confirm and create/reuse test backend resources.
-- `make -C Terraform backend-test`: check the backend with a temporary blob.
-- `make -C Terraform test`: run offline tests with a mocked Azure CLI.
+- `make` or `make help`: print commands and defaults.
+- `make azure-login`: authenticate, list subscriptions, and select one.
+- `make azure-subscription`: select a subscription without logging in again.
+- `make azure-permissions`: confirm and grant subscription-wide roles.
+- `make resource-group-create`: confirm and create/reuse a resource group only.
+- `make backend-create`: confirm and create/reuse test backend resources.
+- `make backend-test`: check the backend with a temporary blob.
+- `make test`: run offline tests with a mocked Azure CLI.
 
 There are no `plan`, `apply`, or `destroy` targets in this shared Makefile.
 Creating a backend does not deploy either Terraform stack.
@@ -73,15 +75,17 @@ Creating a backend does not deploy either Terraform stack.
 ## Recommended first-time sequence
 
 ```bash
-make -C Terraform azure-login
+make azure-login
 
 # Replace these values before running subsequent commands.
 export SUBSCRIPTION_ID="<subscription UUID>"
 export STORAGE_ACCOUNT="<globally unique 3-24 lowercase letters/digits>"
 
-make -C Terraform azure-permissions
-make -C Terraform backend-create
-make -C Terraform backend-test
+make azure-permissions
+# Optional: backend-create also creates/reuses this group.
+make resource-group-create
+make backend-create
+make backend-test
 ```
 
 The permissions and creation commands require confirmation. If an administrator
@@ -91,19 +95,19 @@ creation can incur charges.
 ## help
 
 ```bash
-make -C Terraform help
+make help
 ```
 
 Lists targets and configuration defaults without contacting Azure. This is also
-the default target when running `make -C Terraform` with no command.
+the default target when running `make` with no command.
 
 ## azure-login and azure-subscription
 
 ```bash
-make -C Terraform azure-login
-make -C Terraform azure-subscription
+make azure-login
+make azure-subscription
 # Or select directly:
-make -C Terraform azure-subscription SUBSCRIPTION_ID="<subscription UUID or name>"
+make azure-subscription SUBSCRIPTION_ID="<subscription UUID or name>"
 ```
 
 `azure-login` opens the Azure CLI authentication flow, then lists enabled
@@ -111,7 +115,7 @@ subscriptions and prompts for a subscription UUID or name.
 `azure-subscription` skips authentication and only lists/selects subscriptions.
 Both update the Azure CLI default and show the selected account.
 
-For safety, every permission/backend command still requires an explicit
+For safety, every resource/permission/backend command still requires an explicit
 `SUBSCRIPTION_ID` and passes the resolved UUID to each Azure resource operation.
 A Make recipe cannot export variables back into your terminal, which is why the
 first-time sequence exports the variable in your own shell.
@@ -119,7 +123,7 @@ first-time sequence exports the variable in your own shell.
 ## azure-permissions
 
 ```bash
-make -C Terraform azure-permissions
+make azure-permissions
 ```
 
 Displays the signed-in user's Entra object ID and requests confirmation by typing
@@ -150,10 +154,32 @@ To target another identity, use its **Entra object ID**, not an application/clie
 ID:
 
 ```bash
-make -C Terraform azure-permissions \
+make azure-permissions \
   PRINCIPAL_ID="<Entra object UUID>" PRINCIPAL_TYPE=ServicePrincipal
 # PRINCIPAL_TYPE can also be User or Group.
 ```
+
+## resource-group-create
+
+Create a resource group without creating storage or assigning roles:
+
+```bash
+make resource-group-create \
+  SUBSCRIPTION_ID="<subscription UUID>" \
+  RESOURCE_GROUP=rg-my-test LOCATION=eastus2
+```
+
+This resolves and displays the target subscription, group, and location; asks you
+to type the subscription UUID for confirmation; then runs `az group create`.
+You must already be logged in and have resource-group creation permission, such
+as Contributor at subscription scope. `STORAGE_ACCOUNT` and Blob/Key Vault roles
+are not required.
+
+Defaults are `RESOURCE_GROUP=rg-terraform-state-test` and `LOCATION=eastus2`.
+Reusing an existing group does not delete its contents; an existing group's
+location cannot be changed by rerunning this command. If you want the backend in
+that group, pass the same `RESOURCE_GROUP` to `backend-create` and `backend-test`.
+No backend configuration or Terraform deployment inputs are written by this target.
 
 ## backend-create
 
@@ -162,7 +188,7 @@ Storage Blob Data Contributor. Assigning roles to another principal does not gra
 the caller access.
 
 ```bash
-make -C Terraform backend-create
+make backend-create
 ```
 
 After subscription confirmation, creates/reuses:
@@ -184,7 +210,7 @@ a differing existing file is never overwritten. No credentials are written.
 To customize:
 
 ```bash
-make -C Terraform backend-create \
+make backend-create \
   RESOURCE_GROUP=rg-state-sandbox LOCATION=westus2 \
   CONTAINER_NAME=tfstate STATE_KEY=privatelink-network.tfstate
 ```
@@ -215,9 +241,9 @@ as applicable.
 Use the same subscription, account, group, and container used for creation:
 
 ```bash
-make -C Terraform backend-test
+make backend-test
 # If you customized resource names during creation:
-make -C Terraform backend-test RESOURCE_GROUP=rg-state-sandbox CONTAINER_NAME=tfstate
+make backend-test RESOURCE_GROUP=rg-state-sandbox CONTAINER_NAME=tfstate
 ```
 
 Checks resource availability, uploads a unique `_bootstrap-tests/<UUID>.txt`,
@@ -236,7 +262,7 @@ backend and perform those blob operations at that time.
 ## test
 
 ```bash
-make -C Terraform test
+make test
 ```
 
 Runs offline Python unittest regression tests using a temporary mocked Azure CLI.
@@ -258,24 +284,26 @@ python3 -m unittest discover -s .github/scripts/tests -v
 Pass variables as `make ... NAME=value` or export them in your shell.
 Command-line values override environment values.
 
-- `SUBSCRIPTION_ID`: required for permission/backend commands; UUID or name.
+- `SUBSCRIPTION_ID`: required for resource/permission/backend commands; UUID or name.
   Login/selection commands prompt if absent.
 - `STORAGE_ACCOUNT`: required for backend commands; globally unique account name,
   3–24 lowercase letters/digits.
 - `RESOURCE_GROUP`: default `rg-terraform-state-test`.
-- `LOCATION`: default `eastus2`; used by `backend-create`.
+- `LOCATION`: default `eastus2`; used by `resource-group-create` and `backend-create`.
 - `CONTAINER_NAME`: default `tfstate`; lowercase letters/digits/hyphens, 3–63
   characters, no consecutive hyphens.
 - `STATE_KEY`: default `test/terraform.tfstate`; written to generated backend
   configuration, not used as the smoke-test blob name.
 - `BACKEND_CONFIG`: default `Terraform/backend.hcl`, anchored to the shared
-  Makefile directory; custom relative paths are relative to Make's working
-  directory (`Terraform/` when using `-C Terraform`). Used by `backend-create`.
+  Terraform Makefile directory, unchanged whichever entry point you use.
+  Custom relative paths are relative to your current working directory: the
+  repository root when using root-level `make`, or `Terraform/` when running
+  Make there. Used by `backend-create`.
 - `PRINCIPAL_ID`: defaults to the signed-in user's Entra object ID. Required when
   `PRINCIPAL_TYPE` is Group or ServicePrincipal.
 - `PRINCIPAL_TYPE`: User (default), Group, or ServicePrincipal.
 - `CONFIRM_SUBSCRIPTION`: optional exact resolved subscription UUID, only for
-  deliberate noninteractive confirmation of role grants/backend creation.
+  deliberate noninteractive confirmation of role grants/group/backend creation.
 
 Do not run cloud-changing targets concurrently with `make -j`; perform login,
 permissions, creation, and testing sequentially.
@@ -285,7 +313,7 @@ The Makefile does not automatically load `.env`, `terraform.tfvars`, or
 in values such as subscription names:
 
 ```bash
-make -C Terraform azure-subscription SUBSCRIPTION_ID="Development Subscription"
+make azure-subscription SUBSCRIPTION_ID="Development Subscription"
 ```
 
 ## Noninteractive execution
@@ -299,9 +327,10 @@ export SUBSCRIPTION_ID="<subscription UUID>"
 export STORAGE_ACCOUNT="<globally unique storage account name>"
 
 # Existing Azure CLI authentication is required; these commands do not log in.
-make -C Terraform azure-permissions CONFIRM_SUBSCRIPTION="$SUBSCRIPTION_ID"
-make -C Terraform backend-create CONFIRM_SUBSCRIPTION="$SUBSCRIPTION_ID"
-make -C Terraform backend-test
+make azure-permissions CONFIRM_SUBSCRIPTION="$SUBSCRIPTION_ID"
+make resource-group-create CONFIRM_SUBSCRIPTION="$SUBSCRIPTION_ID"
+make backend-create CONFIRM_SUBSCRIPTION="$SUBSCRIPTION_ID"
+make backend-test
 ```
 
 For a service principal or managed identity session, pass `PRINCIPAL_ID` and
@@ -326,15 +355,17 @@ For example, to generate a separate backend file for a **new** Key Vault stack
 using the same test account/container but a different state key:
 
 ```bash
-make -C Terraform backend-create \
+make backend-create \
   STATE_KEY=keyvault/deployment.tfstate \
-  BACKEND_CONFIG=Azure/deployments/keyvault/backend.hcl
+  BACKEND_CONFIG=Terraform/Azure/deployments/keyvault/backend.hcl
 
 terraform -chdir=Terraform/Azure/deployments/keyvault init \
   -backend-config=backend.hcl
 ```
 
 This path is also ignored by the repository's `backend.hcl` rule.
+The example runs from the repository root; when inside `Terraform/`, use
+`BACKEND_CONFIG=Azure/deployments/keyvault/backend.hcl` instead.
 The backend commands do not write deployment input files or run `plan`/`apply`.
 Review each deployment's required inputs and follow its own guide; do not use
 `init` to silently redirect an existing stack to a new state file.

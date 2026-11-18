@@ -34,3 +34,11 @@ htmlcov/
 *.tfstate
 *.tfstate.*
 crash.log
+
+# Local deployment inputs, saved plans, and pipeline artifacts
+*.tfplan
+tfplan
+backend.hcl
+.pipeline/
+.pipeline.auto.tfvars.json
+Terraform/Azure/deployments/**/terraform.tfvars

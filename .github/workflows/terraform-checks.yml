@@ -1,0 +1,64 @@
+name: Terraform checks
+
+on:
+  workflow_call:
+    inputs:
+      stack:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      STACK: ${{ inputs.stack }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+          terraform_wrapper: false
+      - name: Check formatting, configuration, and mock tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$STACK" in
+            KEYVAULT)
+              terraform -chdir=Terraform/Azure/tfm-keyvault fmt -check -recursive -diff
+              terraform -chdir=Terraform/Azure/deployments/keyvault fmt -check -recursive -diff
+              directories=(
+                Terraform/Azure/tfm-keyvault
+                Terraform/Azure/tfm-keyvault/modules/key
+                Terraform/Azure/tfm-keyvault/modules/secret
+                Terraform/Azure/tfm-keyvault/examples/basic
+                Terraform/Azure/tfm-keyvault/examples/complete
+                Terraform/Azure/tfm-keyvault/examples/bootstrap
+                Terraform/Azure/deployments/keyvault
+              )
+              ;;
+            PRIVATELINK)
+              terraform -chdir=Terraform/Azure/tfm-privateLink-network fmt -check -recursive -diff
+              directories=(Terraform/Azure/tfm-privateLink-network)
+              ;;
+            *) printf 'Unknown stack\n' >&2; exit 1 ;;
+          esac
+          for directory in "${directories[@]}"; do
+            terraform -chdir="$directory" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="$directory" validate -no-color
+            if [ -d "$directory/tests" ]; then
+              terraform -chdir="$directory" test -no-color
+            fi
+          done
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pipeline regression tests
+        run: python3 -m unittest discover -s .github/scripts/tests -v

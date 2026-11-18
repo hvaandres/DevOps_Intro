@@ -1,0 +1,183 @@
+name: Terraform deployment
+
+on:
+  workflow_call:
+    inputs:
+      stack:
+        required: true
+        type: string
+      dry_run:
+        description: Plan only; skip the apply job
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-deployment-${{ inputs.stack }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.16.0"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  ARM_USE_OIDC: "true"
+  ARM_USE_AZUREAD: "true"
+  ARM_USE_CLI: "false"
+  ARM_TENANT_ID: ${{ vars[format('{0}_TENANT_ID', inputs.stack)] }}
+  ARM_SUBSCRIPTION_ID: ${{ vars[format('{0}_SUBSCRIPTION_ID', inputs.stack)] }}
+  STACK: ${{ inputs.stack }}
+  DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+  TF_ROOT: ${{ inputs.stack == 'KEYVAULT' && 'Terraform/Azure/deployments/keyvault' || 'Terraform/Azure/tfm-privateLink-network' }}
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', inputs.stack)] || '["self-hosted","linux","azure-terraform"]') }}
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    outputs:
+      changed: ${{ steps.plan.outputs.changed }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    env:
+      ARM_CLIENT_ID: ${{ vars[format('{0}_PLAN_CLIENT_ID', inputs.stack)] }}
+      BACKEND_ACCOUNT: ${{ vars[format('{0}_BACKEND_ACCOUNT', inputs.stack)] }}
+      BACKEND_CONTAINER: ${{ vars[format('{0}_BACKEND_CONTAINER', inputs.stack)] }}
+      TFVARS_JSON: ${{ vars[format('{0}_TFVARS_JSON', inputs.stack)] }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify approval protection exists
+        uses: actions/github-script@v7
+        env:
+          APPLY_ENVIRONMENT: ${{ inputs.stack == 'KEYVAULT' && 'keyvault-apply' || 'privatelink-apply' }}
+        with:
+          script: |
+            const environment_name = process.env.APPLY_ENVIRONMENT;
+            const args = {...context.repo, environment_name};
+            const {data: environment} = await github.rest.repos.getEnvironment(args);
+            const review = environment.protection_rules.find(rule => rule.type === 'required_reviewers');
+            if (!review?.reviewers?.length || !review.prevent_self_review) {
+              throw new Error(`${environment_name} requires reviewers with self-review disabled.`);
+            }
+            if (!environment.deployment_branch_policy?.custom_branch_policies) {
+              throw new Error(`${environment_name} must allow only the main branch.`);
+            }
+            const policies = await github.paginate(github.rest.repos.listDeploymentBranchPolicies, args);
+            if (policies.length !== 1 || policies[0].name !== 'main' ||
+                (policies[0].type && policies[0].type !== 'branch')) {
+              throw new Error(`${environment_name} must have exactly one branch policy: main.`);
+            }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate deployment settings and materialize non-secret inputs
+        run: python3 .github/scripts/terraform-pipeline.py prepare
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: Initialize backend with OIDC and Entra data-plane authorization
+        run: terraform -chdir="$TF_ROOT" init -input=false -reconfigure -lockfile=readonly -backend-config=.pipeline/backend.hcl
+      - name: Validate deployment configuration
+        run: terraform -chdir="$TF_ROOT" validate -no-color
+      - name: Create saved plan
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=0
+          terraform -chdir="$TF_ROOT" plan -input=false -no-color -lock-timeout=5m \
+            -var-file=.pipeline/inputs.tfvars.json \
+            -detailed-exitcode -out=.pipeline/deployment.tfplan || code=$?
+          case "$code" in
+            0) printf 'changed=false\n' >> "$GITHUB_OUTPUT" ;;
+            2) printf 'changed=true\n' >> "$GITHUB_OUTPUT" ;;
+            *) exit "$code" ;;
+          esac
+      - name: Write review summary without resource attribute values
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$TF_ROOT" show -json .pipeline/deployment.tfplan \
+            | python3 .github/scripts/terraform-pipeline.py summarize
+          python3 .github/scripts/terraform-pipeline.py manifest
+      - name: Upload immutable same-run plan
+        if: steps.plan.outputs.changed == 'true'
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan-${{ inputs.stack }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.TF_ROOT }}/.pipeline/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  apply:
+    needs: plan
+    if: needs.plan.outputs.changed == 'true' && !inputs.dry_run
+    environment:
+      name: ${{ inputs.stack == 'KEYVAULT' && 'keyvault-apply' || 'privatelink-apply' }}
+    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', inputs.stack)] || '["self-hosted","linux","azure-terraform"]') }}
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars[format('{0}_APPLY_CLIENT_ID', inputs.stack)] }}
+      EXPECTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Reject superseded commits after approval
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data} = await github.rest.git.getRef({...context.repo, ref: 'heads/main'});
+            if (data.object.sha !== context.sha) {
+              throw new Error('main has advanced. Review and approve a fresh plan for the latest commit.');
+            }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify immutable artifact digest via GitHub
+        id: artifact
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_NAME: plan-${{ inputs.stack }}-${{ github.run_id }}-${{ github.run_attempt }}
+        with:
+          script: |
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: context.runId
+            });
+            const matches = artifacts.filter(item => item.name === process.env.ARTIFACT_NAME && !item.expired);
+            if (matches.length !== 1 || matches[0].digest !== `sha256:${process.env.EXPECTED_ARTIFACT_DIGEST}`) {
+              throw new Error('Missing artifact or digest differs from the planning job.');
+            }
+            core.setOutput('id', String(matches[0].id));
+      - name: Download only this run and attempt's plan
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.id }}
+          path: ${{ env.TF_ROOT }}/.pipeline/
+      - name: Verify artifact provenance and file integrity
+        run: python3 .github/scripts/terraform-pipeline.py verify
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: Initialize the same backend with the apply identity
+        run: terraform -chdir="$TF_ROOT" init -input=false -reconfigure -lockfile=readonly -backend-config=.pipeline/backend.hcl
+      - name: Apply only the reviewed saved plan
+        run: terraform -chdir="$TF_ROOT" apply -input=false -no-color -lock-timeout=5m .pipeline/deployment.tfplan

@@ -1,0 +1,44 @@
+name: CI and CD — Key Vault
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Terraform/Azure/tfm-keyvault/**"
+      - "Terraform/Azure/deployments/keyvault/**"
+      - ".github/**"
+  push:
+    branches: [main]
+    paths:
+      - "Terraform/Azure/tfm-keyvault/**"
+      - "Terraform/Azure/deployments/keyvault/**"
+      - ".github/**"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Plan only; never apply
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/terraform-checks.yml
+    with:
+      stack: KEYVAULT
+  deploy:
+    needs: validate
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      vars.KEYVAULT_DEPLOY_ENABLED == 'true'
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-deploy.yml
+    with:
+      stack: KEYVAULT
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}

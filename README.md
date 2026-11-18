@@ -36,6 +36,16 @@ Each project will be structured as follows:
     - [x] Python
     - [x] Bash
 
+## Terraform Azure setup
+
+See the [Terraform Make command reference](Terraform/intro.md) for Azure login,
+subscription selection, permissions, and creating/testing a Terraform state
+backend. Start with `make -C Terraform help` from the repository root.
+
+Deployment-specific documentation:
+- [Private Link networking](Terraform/Azure/tfm-privateLink-network/README.md)
+- [Key Vault](Terraform/Azure/tfm-keyvault/README.md)
+
 ## Contribution
 If you would like to contribute to this project, please follow the steps below:
 1. Fork the repository

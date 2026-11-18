@@ -46,7 +46,8 @@ When teams deploy Azure services with Private Endpoints (Storage, SQL, Key Vault
 
 ```
 tfm-privateLink-network/
-├── main.tf                  # Provider, backend, module calls
+├── main.tf                  # Terraform requirements, backend, module calls
+├── providers.tf             # Default and spoke AzureRM providers
 ├── variables.tf             # All input variables
 ├── outputs.tf               # Zone IDs, peering IDs, record FQDNs
 ├── resource_groups.tf       # Hub resource group for DNS zones
@@ -77,6 +78,11 @@ You also need:
 - A **Storage Account** for the Terraform backend
 
 ## Quick start (first-time setup)
+For shared Make commands covering login, subscription selection, subscription
+permissions, and a standalone resource group/storage/tfstate backend test, see
+[Terraform setup](../../intro.md). From the repository root, run
+`make -C Terraform help`. That backend setup does not create hub/spoke VNets;
+the networking setup below is separate.
 
 ### 1. Login to Azure
 

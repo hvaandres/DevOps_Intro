@@ -22,23 +22,6 @@ terraform {
   }
 }
 
-###############################################################################
-# Provider Configuration
-###############################################################################
-
-provider "azurerm" {
-  resource_provider_registrations = "none"
-  features {}
-
-  subscription_id = var.hub_subscription_id
-}
-
-# Alias provider for spoke subscriptions (when spokes live in different subs)
-provider "azurerm" {
-  alias                           = "spoke"
-  resource_provider_registrations = "none"
-  features {}
-}
 
 ###############################################################################
 # Module: Private DNS Zones (Hub-Owned)

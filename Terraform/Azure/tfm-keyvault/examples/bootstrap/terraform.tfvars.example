@@ -1,0 +1,6 @@
+storage_account_name         = "replacewithuniquename"
+state_resource_group_name    = "rg-terraform-state"
+workload_resource_group_name = "rg-yourapp-dev"
+deployment_principal_id      = "00000000-0000-0000-0000-000000000000"
+# Replace with your actual public runner IPv4 address (not an RFC 1918 address).
+allowed_ipv4_cidrs = ["203.0.113.10"]

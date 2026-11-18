@@ -1,0 +1,21 @@
+# Local Terraform artifacts and potentially sensitive configuration.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+backend.hcl
+*.auto.tfbackend
+.env
+.env.*
+!.env.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Keep dependency lock files versioned for repeatable example deployments.

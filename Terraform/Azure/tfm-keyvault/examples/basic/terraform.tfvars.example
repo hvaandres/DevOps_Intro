@@ -1,0 +1,4 @@
+vault_name               = "kv-yourapp-dev-unique"
+resource_group_name      = "rg-yourapp-dev"
+application_principal_id = "00000000-0000-0000-0000-000000000000"
+allowed_ipv4_cidrs        = []

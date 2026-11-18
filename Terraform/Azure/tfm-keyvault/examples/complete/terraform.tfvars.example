@@ -1,0 +1,9 @@
+vault_name          = "kv-yourapp-prod-unique"
+resource_group_name = "rg-yourapp-prod-kv"
+location            = "westeurope"
+# First deploy networking only, then connect your runner and set this to true.
+create_objects = false
+# Supply future UTC timestamps before enabling create_objects.
+# key_expiration_date    = "YYYY-MM-DDTHH:MM:SSZ"
+# secret_expiration_date = "YYYY-MM-DDTHH:MM:SSZ"
+# Supply database_password through TF_VAR_database_password from a secret store.

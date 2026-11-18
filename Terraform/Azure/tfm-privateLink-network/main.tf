@@ -13,6 +13,7 @@ terraform {
   }
 
   backend "azurerm" {
+    use_azuread_auth = true
     # Configured via backend config file or CLI flags:
     #   resource_group_name  = "rg-terraform-state"
     #   storage_account_name = "stterraformstate"
@@ -26,6 +27,7 @@ terraform {
 ###############################################################################
 
 provider "azurerm" {
+  resource_provider_registrations = "none"
   features {}
 
   subscription_id = var.hub_subscription_id
@@ -33,7 +35,8 @@ provider "azurerm" {
 
 # Alias provider for spoke subscriptions (when spokes live in different subs)
 provider "azurerm" {
-  alias = "spoke"
+  alias                           = "spoke"
+  resource_provider_registrations = "none"
   features {}
 }
 

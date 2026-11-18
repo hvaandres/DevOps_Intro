@@ -98,9 +98,7 @@ Use standard AzureRM environment variables:
 - `ARM_SUBSCRIPTION_ID`: deployment subscription.
 - `ARM_TENANT_ID`: service-principal tenant.
 - `ARM_CLIENT_ID`: application/client ID.
-- `ARM_CLIENT_SECRET`: retrieve securely from a secret manager, or use a certificate.
-
-Prefer federated OIDC in CI: set `ARM_USE_OIDC=true` and configure the CI platform's token and federated identity; do not set `ARM_CLIENT_SECRET` for OIDC. Backend and provider authenticate independently, even when using the same environment variables.
+For local development, authenticate with Azure CLI using an authorized identity or your organization's approved service-principal mechanism. CI uses federated OIDC: `ARM_USE_OIDC=true` with GitHub's token endpoint and federated app credentials. Do not configure `ARM_CLIENT_SECRET` for these workflows. Backend and provider authenticate independently, even when using the same environment variables.
 
 Do not put client secrets, access keys, SAS tokens, or OIDC tokens into HCL, backend files, CLI arguments, or Git. The examples enable `use_azuread_auth = true` for state, eliminating storage access-key lookup. Reader on the storage account is only additionally needed if backend endpoint lookup is enabled.
 
@@ -125,6 +123,102 @@ These are manual deployment instructions; local validation does not deploy Azure
 - Azure Key Vault supports certificate storage, but this module does not issue/import certificates. Key rotation is supported; secret expiration does not rotate the secret.
 - Before-expiry key rotation requires an initial `expiration_date`. Set a meaningful future date, typically 90 days from initial deployment, and a compatible ISO 8601 rotation policy. `expire_after` applies to newly rotated key versions. Use versionless IDs for consumers that support automatic rotation. Do not dynamically change the initial expiration on every plan.
 - HSM-backed keys require `sku_name = "premium"`; the standalone key module relies on the caller to select a compatible vault.
+
+## GitHub Actions CI/CD and Blob state setup
+The repository workflows cover both Key Vault and Private Link Network:
+- `ci-keyvault.yml` and `ci-privatelink-network.yml`: credential-free PR checks and, when enabled, deployment after a push/merge to `main`.
+- `terraform-checks.yml`: formatting, backend-disabled validation, and mock tests. PR code never runs on the private deployment runner and receives no Azure token.
+- `terraform-deploy.yml`: OIDC plan against remote Blob state, review summary, required environment approval, then apply of that exact saved plan. Manual runs from `main` default to `dry_run=true`, which skips apply entirely.
+- `add-resource-privatelink.yml`: offline resource-request PR generation only; it never accesses Azure or state.
+
+Deployments are **disabled by default**. Leave `KEYVAULT_DEPLOY_ENABLED` and `PRIVATELINK_DEPLOY_ENABLED` unset or `false` while doing local dry runs. Local checks use `init -backend=false` and mock providers; they do not establish that live federation, RBAC, or connectivity works.
+
+### 1. Provision the storage account and Blob container separately
+Use existing Azure Blob Storage or provision it with an administrator before enabling CD. This pipeline does not create its own backend. Set a **storage account name** and **container name**, not a Blob URL, connection string, SAS token, or account key.
+
+Both stacks can share an account/container because they use different blob keys:
+- Key Vault: `keyvault/deployment.tfstate`.
+- Private Link: `privatelink-network.tfstate` (preserves the existing workflow's key).
+
+The backend uses Entra data-plane authorization (`ARM_USE_AZUREAD=true`) and OIDC. Grant **Storage Blob Data Contributor** on the selected container to both planning and apply service principals, including blob-lease locking rights. Normal initialization does not need account-key lookup or storage-account Reader; Reader is additionally required if you explicitly enable management-plane endpoint discovery.
+
+Enable versioning, blob/container soft delete, encryption, restricted access, and appropriate retention on the state account. Do not put a read-only immutability policy on the active state blob, because Terraform must update and lease it. Restrict the storage firewall/private endpoint to trusted runners. OIDC does not provide network access.
+
+**State is a snapshot of managed infrastructure, not a change log.** Saved plans describe proposed changes; blob versions provide historical state snapshots. No changes are persisted to the state blob during these local dry-run checks.
+
+If these resources already have state under another blob key/account, stop and perform a reviewed state migration/import first. Do not enable a second root against empty state for existing resources. Never copy Key Vault example state into this new deployment root without reconciling its resource addresses and inputs.
+
+### 2. Configure federated service principals
+Use separate plan and apply app registrations/service principals per stack by default. Federation is configured on the **Entra app registration**; Azure RBAC targets the corresponding **service principal object ID**. Workflow configuration uses its **application/client ID**, not object ID.
+
+Configure federated credentials with:
+- Issuer: `https://token.actions.githubusercontent.com`.
+- Audience: `api://AzureADTokenExchange`.
+- Plan trust: this repository's `main` branch token subject.
+- Apply trust: this repository's `keyvault-apply` or `privatelink-apply` environment token subject.
+
+For repositories using the legacy subject format, subjects are:
+- Plan: `repo:hvaandres/DevOps_Intro:ref:refs/heads/main`.
+- Key Vault apply: `repo:hvaandres/DevOps_Intro:environment:keyvault-apply`.
+- Private Link apply: `repo:hvaandres/DevOps_Intro:environment:privatelink-apply`.
+
+**Verify the repository's actual OIDC subject configuration before creating trust.** New/transferred/renamed repositories may use immutable owner/repository IDs, and customized subjects can differ. Do not print or persist bearer tokens to discover claims. Use the repository OIDC configuration and GitHub's current subject-format documentation. Do not trust all branches, PR subjects, or arbitrary repositories.
+
+Terraform requests short-lived tokens directly using job-scoped `id-token: write`; no `azure/login`, stored client secret, access key, SAS, or token file is required. If your environment must use one service principal, set both client-ID variables to that ID and add both federated credentials, but understand that the planning job then has the same Azure privileges as apply.
+
+Planning needs workload Reader and enough scoped read/data-plane access to refresh managed resources, plus state-container permissions. Applying needs workload Contributor and any required subnet/private-DNS permissions. Role assignments require narrowly scoped Role Based Access Control Administrator or an equivalent approved custom role; Contributor alone cannot create role assignments or management locks. Pre-register the required Azure resource providers because the roots disable automatic registration. Do not grant Owner by default.
+
+The new Key Vault deployment root uses an **existing resource group**, private/deny defaults, optional private endpoints, and explicit application role assignments. It intentionally exposes no key/secret-value inputs. Vault data-plane roles are not needed by this root until it is extended to manage such objects; that extension also requires private runner connectivity and sensitive-input handling. Existing mock/example tests still cover the module's key/secret features.
+
+### 3. Configure protected deployment environments
+Create `keyvault-apply` and `privatelink-apply` in the repository settings before enabling deployment:
+1. Set required reviewers, with **Prevent self-review** enabled.
+2. Select **Selected branches and tags**, with exactly one **branch** rule named `main` and no tag rules.
+3. Disable administrator bypass where supported.
+4. Protect `main` and require CI/review for changes to Terraform and `.github/`.
+
+The plan job checks reviewers/self-review and branch rules via the GitHub API and fails if they are absent. Administrator bypass must be disabled manually; the read API does not reliably expose that setting. YAML environment names alone do not enforce review. Reviewers are only available for public repositories on GitHub Free/Pro/Team; a private repository needs a plan supporting that protection. If unavailable, leave deployment disabled rather than removing the gate.
+
+### 4. Set repository Actions variables
+For each prefix `KEYVAULT` and `PRIVATELINK`, configure these **repository-level non-secret variables** (do not override shared settings at environment scope):
+- `<PREFIX>_PLAN_CLIENT_ID`: planning app/client UUID.
+- `<PREFIX>_APPLY_CLIENT_ID`: privileged apply app/client UUID.
+- `<PREFIX>_TENANT_ID`: tenant UUID.
+- `<PREFIX>_SUBSCRIPTION_ID`: workload subscription UUID.
+- `<PREFIX>_BACKEND_ACCOUNT`: state storage account name.
+- `<PREFIX>_BACKEND_CONTAINER`: existing Blob container name.
+- `<PREFIX>_TFVARS_JSON`: non-secret deployment inputs as a JSON object.
+- `<PREFIX>_RUNNER_LABELS`: optional JSON array, default `["self-hosted","linux","azure-terraform"]`.
+- `<PREFIX>_DEPLOY_ENABLED`: set to the literal `true` **only after** federation, RBAC, state, environments, inputs, and runner setup are complete.
+
+Example `KEYVAULT_TFVARS_JSON` (replace names and add actual subnet/DNS references under `private_endpoints` if required):
+```json
+{
+  "vault_name": "kv-yourapp-dev-unique",
+  "resource_group_name": "rg-yourapp-dev",
+  "tags": {"environment": "dev", "managed_by": "terraform"}
+}
+```
+An empty endpoint map creates an inaccessible private-only vault until you configure connectivity; it never enables public access. Optional inputs are `sku_name`, `private_endpoints`, `role_assignments`, and `tags`; see `../deployments/keyvault/variables.tf`. The pipeline rejects unknown top-level inputs to avoid accidental secrets/configuration injection.
+
+For Private Link, provide real `hub_subscription_id`, `hub_vnet_id`, `hub_vnet_name`, and `hub_resource_group_name`. Optional settings are `location`, `environment`, `tags`, `enable_resource_locks`, `alert_action_group_id`, and `alert_thresholds`. Deployment JSON overrides the placeholder hub values in committed `terraform.tfvars`. Keep zone/spoke/record maps in that committed file so resource-request PRs remain authoritative. Only same-subscription spoke peerings are supported by the current provider wiring.
+
+Use a dedicated, preferably ephemeral, **trusted Linux deployment runner** with Python/tool-download capability, outbound access to GitHub OIDC/Entra/Azure APIs, access to the Blob endpoint, and private DNS/routing to any managed private service. Tag it `azure-terraform`, restrict its runner group to trusted workflows, and give the host no ambient privileged Azure credentials. Never run PR code there. Hosted runners can be configured using `["ubuntu-latest"]` only where all required endpoints are reachable without weakening firewall policy.
+
+### 5. Enable and operate deployment
+After configuration, enable each stack independently. A merge/push to `main` affecting that stack (or shared `.github` files) runs CI, then plans. No-change plans skip approval/apply. Review the resource-action summary, code diff, and trusted workflow logs before approving the environment job.
+
+For a cloud-backed dry run, manually run the stack workflow on `main` with **dry_run enabled** (the default). This still requires deployment configuration, federation, state-container RBAC, protected-environment setup, and network access, but skips the apply job regardless of changes. It can read state and acquire Blob leases; it is not an offline check. For a real manual deployment, explicitly disable dry_run and then approve the protected apply job. Post-merge deployments always retain their approval gate.
+
+Plan/apply use Terraform 1.16.0, committed provider locks, one backend, one commit, and one run/attempt. Apply checks artifact digest, file hashes, provenance, provider lock, and whether `main` has advanced. Runs serialize per stack without cancelling an active apply; Terraform also uses Blob leases. GitHub concurrency can replace older pending runs, and superseded commits are rejected; it is not a deployment queue guaranteeing every commit is applied. Independently triggered stacks are not automatically dependency-ordered: provision shared DNS/subnets first before adding Key Vault endpoint references.
+
+Plan artifacts retain for **one day**, contain raw state/plan data, and must be treated as sensitive even though review summaries omit all attribute values. Restrict repository/artifact/log access. OIDC eliminates authentication secrets, not secrets stored in Terraform state. Do not put secrets in tags, resource names, outputs, repository variables, tfvars, or provider diagnostics.
+
+If approval is delayed beyond artifact retention, state changes externally, or a run fails, start a **new full workflow run** on current `main` to create/review a fresh plan. Do not rerun only apply: run-attempt binding intentionally rejects a previous attempt's plan. Never bypass this by regenerating a plan inside the apply job.
+
+Resource-request PRs use `GITHUB_TOKEN`, so GitHub does not automatically run ordinary PR workflows for those bot-created PRs. Reopen the PR as a user or configure an approved GitHub App installation token with narrowly scoped contents/PR permissions if automatic PR checks are needed. No Azure credential is needed for resource requests.
+
+References: [Azure OIDC](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-azure), [Azure Blob backend](https://developer.hashicorp.com/terraform/language/backend/azurerm), [environment protection](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 
 ## Input/output reference
 Required root inputs are `name` and `resource_group_name`. Main optional inputs:

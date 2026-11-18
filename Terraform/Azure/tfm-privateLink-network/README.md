@@ -140,22 +140,22 @@ Pick any combination — they're independent. You can add just a zone, just reco
 
 #### Example: Add a new DNS zone
 
-1. Set **"Add a Private DNS Zone?"** to `yes`
+1. Enable **"Add a Private DNS Zone?"**
 2. Fill in:
    - **Logical key:** `cosmosdb`
    - **Zone suffix:** `documents.azure.com` (the workflow prepends `privatelink.` automatically)
-3. Leave the other toggles as `no`
+3. Leave the other toggles disabled
 4. Click **Run workflow**
 
 The workflow will:
 - Modify `terraform.tfvars`
-- Run `terraform plan` to validate
-- Open a **Pull Request** if the plan succeeds
-- Show a summary of what's ephemeral vs. applied
+- Run backend-disabled initialization and Terraform validation without Azure credentials
+- Open a **Pull Request** if offline validation succeeds
+- Leave cloud planning and deployment to the post-merge approval-gated pipeline
 
 #### Example: Add multiple DNS records
 
-1. Set **"Add DNS A Record(s)?"** to `yes`
+1. Enable **"Add Private DNS A records?"**
 2. Paste a JSON array in the records field:
 
 ```json
@@ -180,7 +180,7 @@ Each record needs: `key` (unique ID), `zone` (must start with `privatelink.`), `
 
 #### Example: Add a new spoke
 
-1. Set **"Add a Spoke VNet Peering?"** to `yes`
+1. Enable **"Add a spoke VNet peering?"**
 2. Fill in:
    - **Logical name:** `spoke-analytics`
    - **VNet resource ID:** `/subscriptions/.../virtualNetworks/vnet-analytics`
@@ -190,7 +190,7 @@ Each record needs: `key` (unique ID), `zone` (must start with `privatelink.`), `
 
 #### Example: Add everything at once
 
-Set all three toggles to `yes` and fill in all the fields. The workflow handles each section independently — if one fails validation, the others still run.
+Enable all three toggles and fill in the fields. All selected changes must pass validation before a PR is opened; invalid input fails the request without modifying infrastructure.
 
 ### Option B: Edit `terraform.tfvars` directly
 
@@ -238,16 +238,19 @@ terraform apply tfplan        # Apply when satisfied
 
 ---
 
-## CI pipeline
+## CI/CD pipeline
 
-Every push or PR that touches module files triggers the **CI — Private Link Network** workflow:
+Every push to `main` or PR targeting `main` that touches module/shared workflow files triggers **CI and CD — Private Link Network**:
 
 1. **Format check** — fails if `terraform fmt` finds issues
 2. **Validate** — catches syntax and type errors
-3. **Plan** — shows exactly what would be created, changed, or destroyed
-4. **Report** — posts a plan summary as a PR comment and job summary
+3. **After merge, when enabled:** OIDC-authenticated plan using the Azure Blob backend
+4. **Review:** resource-action summary and saved plan, followed by required `privatelink-apply` environment approval
+5. **Apply:** applies the exact saved plan from the same commit/run; no-change plans skip apply
 
-The plan report clearly marks everything as **ephemeral** — nothing is applied until someone runs `terraform apply`.
+PR checks never access Azure or state. Deployment is disabled until `PRIVATELINK_DEPLOY_ENABLED=true` and required setup is complete. Formatting errors fail CI rather than becoming warnings. Plan/apply use separate OIDC identities by default; there is no client secret.
+
+Manual runs default to **dry_run=true**: plan against Blob state, but never enter apply. Disable dry_run explicitly to request a manual deployment, which still requires environment approval. Local offline dry runs use a disabled backend instead and need no Azure access.
 
 ---
 
@@ -287,16 +290,26 @@ chmod +x scripts/teardown-test-env.sh
 
 ---
 
-## GitHub Secrets required
+## GitHub OIDC and Blob backend configuration
 
-Configure these in **Settings → Secrets and variables → Actions**:
+Follow the complete [CI/CD setup guide](../tfm-keyvault/README.md#github-actions-cicd-and-blob-state-setup) for federation, role scopes, reviewers, runner connectivity, and artifact safety.
 
-| Secret | Description |
-|--------|-------------|
-| `ARM_CLIENT_ID` | Service principal app ID |
-| `ARM_CLIENT_SECRET` | Service principal secret |
-| `ARM_SUBSCRIPTION_ID` | Azure subscription ID |
-| `ARM_TENANT_ID` | Azure AD tenant ID |
-| `TF_BACKEND_RG` | Backend storage resource group |
-| `TF_BACKEND_SA` | Backend storage account name |
-| `TF_BACKEND_CONTAINER` | Backend blob container name |
+Set repository Actions variables with prefix `PRIVATELINK`: `PLAN_CLIENT_ID`, `APPLY_CLIENT_ID`, `SUBSCRIPTION_ID`, `TENANT_ID`, `BACKEND_ACCOUNT`, `BACKEND_CONTAINER`, `TFVARS_JSON`, optionally `RUNNER_LABELS`, and finally `DEPLOY_ENABLED=true`. For example, the account variable is `PRIVATELINK_BACKEND_ACCOUNT`. Old `ARM_CLIENT_SECRET` and `TF_BACKEND_*` secrets are not used by these workflows.
+
+The backend is an existing storage account's Blob container, with state blob key **`privatelink-network.tfstate`** and Blob lease locking. Key Vault can share the container using its different key `keyvault/deployment.tfstate`. Both identities need Storage Blob Data Contributor on the state container; no storage keys/SAS are used. Provision storage separately and enable versioning/soft delete; do not migrate an existing state implicitly.
+
+Example `PRIVATELINK_TFVARS_JSON` (replace the subscription and hub references):
+```json
+{
+  "hub_subscription_id": "11111111-2222-3333-4444-555555555555",
+  "hub_vnet_id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-hub-networking/providers/Microsoft.Network/virtualNetworks/vnet-hub",
+  "hub_vnet_name": "vnet-hub",
+  "hub_resource_group_name": "rg-hub-networking",
+  "enable_resource_locks": true
+}
+```
+The subscription must match `PRIVATELINK_SUBSCRIPTION_ID`. JSON overrides committed placeholder hub references; keep `private_dns_zones`, `spokes`, and `dns_a_records` in `terraform.tfvars` for PR review. This root currently supports only same-subscription hub/spoke peerings: its child peering module does not wire per-spoke subscription providers. Validation rejects cross-subscription references instead of deploying into the wrong scope.
+
+Resource providers must be registered separately. Grant workload Contributor plus narrowly scoped network/DNS rights for apply; management locks additionally need approved authorization-management permissions. Provisioning the DNS resource group requires resource-group creation permissions at subscription scope. An administrator can instead pre-create/import that resource group to keep the deployment scope narrower.
+
+To perform a dry run without cloud access, leave deployment disabled and run formatting, `terraform init -backend=false`, and `terraform validate`. This verifies configuration only, not actual resource changes. A live cloud plan needs OIDC, existing Blob state, RBAC, and runner connectivity, but still makes no Terraform-managed resource changes until approval/apply.

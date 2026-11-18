@@ -85,6 +85,14 @@ variable "spokes" {
     use_remote_gateways   = optional(bool, false)
   }))
   default = {}
+  validation {
+    condition = alltrue([
+      for spoke in values(var.spokes) :
+      startswith(lower(spoke.vnet_id), "/subscriptions/${lower(var.hub_subscription_id)}/") &&
+      (spoke.subscription_id == "" || lower(spoke.subscription_id) == lower(var.hub_subscription_id))
+    ])
+    error_message = "This root currently supports same-subscription hub/spoke peerings only. Cross-subscription deployment requires explicitly wired provider aliases."
+  }
 }
 
 ###############################################################################

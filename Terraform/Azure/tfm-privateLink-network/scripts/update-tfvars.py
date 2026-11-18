@@ -85,7 +85,7 @@ def add_dns_record(content: str, key: str, zone_name: str, record_name: str, ips
         sys.exit(1)
 
     # Check for duplicate key in existing block
-    existing = re.search(r'dns_a_records\s*=\s*\{(.*)\}', content, re.DOTALL)
+    existing = re.search(r'^\s*dns_a_records\s*=\s*\{(.*)\}', content, re.DOTALL | re.MULTILINE)
     if existing and re.search(rf'^\s*{re.escape(key)}\s*=\s*\{{', existing.group(1), re.MULTILINE):
         print(f"⚠️  Record key '{key}' already exists. Skipping.")
         return content
@@ -100,12 +100,10 @@ def add_dns_record(content: str, key: str, zone_name: str, record_name: str, ips
   }}"""
 
     # If dns_a_records map exists (uncommented)
-    pattern = r'(dns_a_records\s*=\s*\{)(.*?)(})'
-    match = re.search(pattern, content, re.DOTALL)
+    pattern = r'^[ \t]*dns_a_records\s*=\s*\{'
+    match = re.search(pattern, content, re.MULTILINE)
     if match:
-        inner = match.group(2)
-        replacement = match.group(1) + inner + record_block + "\n" + match.group(3)
-        content = content[:match.start()] + replacement + content[match.end():]
+        content = content[:match.end()] + "\n" + record_block + "\n" + content[match.end():]
     else:
         # Replace the commented-out dns_a_records line with a real block
         comment_pattern = r'#\s*dns_a_records\s*=\s*\{\s*\}'
@@ -180,15 +178,14 @@ def add_spoke(content: str, key: str, vnet_id: str, vnet_name: str, rg: str) -> 
   }}"""
 
     # If spokes map exists (uncommented)
-    pattern = r'(spokes\s*=\s*\{)(.*?)(})'
-    match = re.search(pattern, content, re.DOTALL)
+    pattern = r'^[ \t]*spokes\s*=\s*\{'
+    match = re.search(pattern, content, re.MULTILINE)
     if match:
-        inner = match.group(2)
+        inner = content[match.end():]
         if re.search(rf'^\s*{re.escape(key)}\s*=\s*\{{', inner, re.MULTILINE):
             print(f"⚠️  Spoke '{key}' already exists. Skipping.")
             return content
-        replacement = match.group(1) + inner + spoke_block + "\n" + match.group(3)
-        content = content[:match.start()] + replacement + content[match.end():]
+        content = content[:match.end()] + "\n" + spoke_block + "\n" + content[match.end():]
     else:
         # Replace the commented-out spokes block
         comment_pattern = r'#\s*spokes\s*=\s*\{[^}]*?#\s*\}'

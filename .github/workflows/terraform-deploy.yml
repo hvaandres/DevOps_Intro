@@ -10,6 +10,14 @@ on:
         description: Plan only; skip the apply job
         type: boolean
         default: false
+      cyber_subscription:
+        description: Allowlisted Cyber subscription for a manual Key Vault request
+        type: string
+        default: ""
+      keyvault_request_json:
+        description: Non-secret dispatch inputs; validated before Azure authentication
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -25,16 +33,35 @@ env:
   ARM_USE_OIDC: "true"
   ARM_USE_AZUREAD: "true"
   ARM_USE_CLI: "false"
-  ARM_TENANT_ID: ${{ vars[format('{0}_TENANT_ID', inputs.stack)] }}
-  ARM_SUBSCRIPTION_ID: ${{ vars[format('{0}_SUBSCRIPTION_ID', inputs.stack)] }}
   STACK: ${{ inputs.stack }}
+  CYBER_SUBSCRIPTION: ${{ inputs.cyber_subscription }}
+  KEYVAULT_REQUEST_JSON: ${{ inputs.keyvault_request_json }}
   DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
   TF_ROOT: ${{ inputs.stack == 'KEYVAULT' && 'Terraform/Azure/deployments/keyvault' || 'Terraform/Azure/tfm-privateLink-network' }}
 
 jobs:
-  plan:
+  configuration:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', inputs.stack)] || '["self-hosted","linux","azure-terraform"]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      prefix: ${{ steps.configuration.outputs.prefix }}
+      apply_environment: ${{ steps.configuration.outputs.apply_environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate request and choose trusted configuration
+        id: configuration
+        run: python3 .github/scripts/terraform-pipeline.py configure
+  plan:
+    needs: configuration
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', needs.configuration.outputs.prefix)] || '["self-hosted","linux","azure-terraform"]') }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -44,10 +71,13 @@ jobs:
       changed: ${{ steps.plan.outputs.changed }}
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     env:
-      ARM_CLIENT_ID: ${{ vars[format('{0}_PLAN_CLIENT_ID', inputs.stack)] }}
-      BACKEND_ACCOUNT: ${{ vars[format('{0}_BACKEND_ACCOUNT', inputs.stack)] }}
-      BACKEND_CONTAINER: ${{ vars[format('{0}_BACKEND_CONTAINER', inputs.stack)] }}
-      TFVARS_JSON: ${{ vars[format('{0}_TFVARS_JSON', inputs.stack)] }}
+      ARM_CLIENT_ID: ${{ vars[format('{0}_PLAN_CLIENT_ID', needs.configuration.outputs.prefix)] }}
+      ARM_TENANT_ID: ${{ vars[format('{0}_TENANT_ID', needs.configuration.outputs.prefix)] }}
+      ARM_SUBSCRIPTION_ID: ${{ vars[format('{0}_SUBSCRIPTION_ID', needs.configuration.outputs.prefix)] }}
+      BACKEND_ACCOUNT: ${{ vars[format('{0}_BACKEND_ACCOUNT', needs.configuration.outputs.prefix)] }}
+      BACKEND_CONTAINER: ${{ vars[format('{0}_BACKEND_CONTAINER', needs.configuration.outputs.prefix)] }}
+      TFVARS_JSON: ${{ vars[format('{0}_TFVARS_JSON', needs.configuration.outputs.prefix)] }}
+      DEPLOY_ENABLED: ${{ vars[format('{0}_DEPLOY_ENABLED', needs.configuration.outputs.prefix)] }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,38 +87,37 @@ jobs:
       - name: Verify approval protection exists
         uses: actions/github-script@v7
         env:
-          APPLY_ENVIRONMENT: ${{ inputs.stack == 'KEYVAULT' && 'keyvault-apply' || 'privatelink-apply' }}
+          APPLY_ENVIRONMENT: ${{ needs.configuration.outputs.apply_environment }}
         with:
           script: |
-            const environment_name = process.env.APPLY_ENVIRONMENT;
-            const args = {...context.repo, environment_name};
-            const {data: environment} = await github.rest.repos.getEnvironment(args);
-            const review = environment.protection_rules.find(rule => rule.type === 'required_reviewers');
-            if (!review?.reviewers?.length || !review.prevent_self_review) {
-              throw new Error(`${environment_name} requires reviewers with self-review disabled.`);
-            }
-            if (!environment.deployment_branch_policy?.custom_branch_policies) {
-              throw new Error(`${environment_name} must allow only the main branch.`);
-            }
-            const policies = await github.paginate(github.rest.repos.listDeploymentBranchPolicies, args);
-            if (policies.length !== 1 || policies[0].name !== 'main' ||
-                (policies[0].type && policies[0].type !== 'branch')) {
-              throw new Error(`${environment_name} must have exactly one branch policy: main.`);
-            }
+            const gate = require('./.github/scripts/approval-gate.cjs');
+            await gate.verifyProtection({github, context}, process.env.APPLY_ENVIRONMENT);
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Validate deployment settings and materialize non-secret inputs
         run: python3 .github/scripts/terraform-pipeline.py prepare
+      - name: Authenticate Azure preflight with plan OIDC identity
+        if: inputs.cyber_subscription != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+      - name: Verify selected Cyber subscription and existing resource group
+        if: inputs.cyber_subscription != ''
+        run: python3 .github/scripts/terraform-pipeline.py azure-preflight
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
-      - name: Initialize backend with OIDC and Entra data-plane authorization
+      - name: "Terraform check: fmt -check"
+        run: terraform -chdir="$TF_ROOT" fmt -check -recursive -diff
+      - name: "Terraform init: OIDC and Entra Blob backend"
         run: terraform -chdir="$TF_ROOT" init -input=false -reconfigure -lockfile=readonly -backend-config=.pipeline/backend.hcl
-      - name: Validate deployment configuration
+      - name: "Terraform validate: deployment configuration"
         run: terraform -chdir="$TF_ROOT" validate -no-color
-      - name: Create saved plan
+      - name: "Terraform plan: save proposed changes for review"
         id: plan
         shell: bash
         run: |
@@ -102,7 +131,7 @@ jobs:
             2) printf 'changed=true\n' >> "$GITHUB_OUTPUT" ;;
             *) exit "$code" ;;
           esac
-      - name: Write review summary without resource attribute values
+      - name: "Review: summarize plan without resource attribute values"
         shell: bash
         run: |
           set -euo pipefail
@@ -121,18 +150,20 @@ jobs:
           retention-days: 1
 
   apply:
-    needs: plan
+    needs: [configuration, plan]
     if: needs.plan.outputs.changed == 'true' && !inputs.dry_run
     environment:
-      name: ${{ inputs.stack == 'KEYVAULT' && 'keyvault-apply' || 'privatelink-apply' }}
-    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', inputs.stack)] || '["self-hosted","linux","azure-terraform"]') }}
+      name: ${{ needs.configuration.outputs.apply_environment }}
+    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', needs.configuration.outputs.prefix)] || '["self-hosted","linux","azure-terraform"]') }}
     timeout-minutes: 45
     permissions:
       actions: read
       contents: read
       id-token: write
     env:
-      ARM_CLIENT_ID: ${{ vars[format('{0}_APPLY_CLIENT_ID', inputs.stack)] }}
+      ARM_CLIENT_ID: ${{ vars[format('{0}_APPLY_CLIENT_ID', needs.configuration.outputs.prefix)] }}
+      ARM_TENANT_ID: ${{ vars[format('{0}_TENANT_ID', needs.configuration.outputs.prefix)] }}
+      ARM_SUBSCRIPTION_ID: ${{ vars[format('{0}_SUBSCRIPTION_ID', needs.configuration.outputs.prefix)] }}
       EXPECTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
     steps:
       - uses: actions/checkout@v4
@@ -148,6 +179,14 @@ jobs:
             if (data.object.sha !== context.sha) {
               throw new Error('main has advanced. Review and approve a fresh plan for the latest commit.');
             }
+      - name: Require an actual hvaandres approval for this environment
+        uses: actions/github-script@v7
+        env:
+          APPLY_ENVIRONMENT: ${{ needs.configuration.outputs.apply_environment }}
+        with:
+          script: |
+            const gate = require('./.github/scripts/approval-gate.cjs');
+            await gate.verifyApproval({github, context}, process.env.APPLY_ENVIRONMENT);
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -173,11 +212,21 @@ jobs:
           path: ${{ env.TF_ROOT }}/.pipeline/
       - name: Verify artifact provenance and file integrity
         run: python3 .github/scripts/terraform-pipeline.py verify
+      - name: Authenticate Azure preflight with apply OIDC identity
+        if: inputs.cyber_subscription != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+      - name: Recheck Cyber subscription and resource group after approval
+        if: inputs.cyber_subscription != ''
+        run: python3 .github/scripts/terraform-pipeline.py azure-preflight
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
-      - name: Initialize the same backend with the apply identity
+      - name: "Terraform init: same backend, approved apply identity"
         run: terraform -chdir="$TF_ROOT" init -input=false -reconfigure -lockfile=readonly -backend-config=.pipeline/backend.hcl
-      - name: Apply only the reviewed saved plan
+      - name: "Terraform apply: only the hvaandres-approved saved plan"
         run: terraform -chdir="$TF_ROOT" apply -input=false -no-color -lock-timeout=5m .pipeline/deployment.tfplan

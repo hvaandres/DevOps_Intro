@@ -8,6 +8,11 @@ output "name" {
   value       = azurerm_key_vault.this.name
 }
 
+output "location" {
+  description = "Azure region of the Key Vault."
+  value       = azurerm_key_vault.this.location
+}
+
 output "vault_uri" {
   description = "Key Vault data-plane URI."
   value       = azurerm_key_vault.this.vault_uri

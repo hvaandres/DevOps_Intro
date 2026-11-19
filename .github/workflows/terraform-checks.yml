@@ -26,14 +26,12 @@ jobs:
         with:
           terraform_version: "1.16.0"
           terraform_wrapper: false
-      - name: Check formatting, configuration, and mock tests
+      - name: "1. Select Terraform configuration directories"
         shell: bash
         run: |
           set -euo pipefail
           case "$STACK" in
             KEYVAULT)
-              terraform -chdir=Terraform/Azure/tfm-keyvault fmt -check -recursive -diff
-              terraform -chdir=Terraform/Azure/deployments/keyvault fmt -check -recursive -diff
               directories=(
                 Terraform/Azure/tfm-keyvault
                 Terraform/Azure/tfm-keyvault/modules/key
@@ -45,20 +43,52 @@ jobs:
               )
               ;;
             PRIVATELINK)
-              terraform -chdir=Terraform/Azure/tfm-privateLink-network fmt -check -recursive -diff
               directories=(Terraform/Azure/tfm-privateLink-network)
               ;;
             *) printf 'Unknown stack\n' >&2; exit 1 ;;
           esac
-          for directory in "${directories[@]}"; do
+          printf '%s\n' "${directories[@]}" > "$RUNNER_TEMP/terraform-directories"
+      - name: "2. Terraform format check (terraform fmt -check)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r directory; do
+            printf 'Checking Terraform format: %s\n' "$directory"
+            terraform -chdir="$directory" fmt -check -recursive -diff
+          done < "$RUNNER_TEMP/terraform-directories"
+      - name: "3. Terraform init (offline backend)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r directory; do
+            printf 'Initializing Terraform: %s\n' "$directory"
             terraform -chdir="$directory" init -backend=false -input=false -lockfile=readonly
+          done < "$RUNNER_TEMP/terraform-directories"
+      - name: "4. Terraform validate"
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r directory; do
+            printf 'Validating Terraform: %s\n' "$directory"
             terraform -chdir="$directory" validate -no-color
+          done < "$RUNNER_TEMP/terraform-directories"
+      - name: "5. Terraform test (mock providers; no Azure changes)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r directory; do
             if [ -d "$directory/tests" ]; then
+              printf 'Testing Terraform: %s\n' "$directory"
               terraform -chdir="$directory" test -no-color
             fi
-          done
+          done < "$RUNNER_TEMP/terraform-directories"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Pipeline regression tests
         run: python3 -m unittest discover -s .github/scripts/tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Named approval gateway regression tests
+        run: node --test .github/scripts/tests/approval-gate.test.cjs

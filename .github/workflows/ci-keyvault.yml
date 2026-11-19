@@ -15,8 +15,54 @@ on:
       - ".github/**"
   workflow_dispatch:
     inputs:
+      subscription:
+        description: Target Azure subscription (production is the default)
+        required: true
+        type: choice
+        options: [cyber-prd, cyber-dev, cyber-tst]
+        default: cyber-prd
+      vault_name:
+        description: Globally unique vault name (3-24 letters/digits/hyphens)
+        required: true
+        type: string
+      resource_group_name:
+        description: Existing resource group in the selected Cyber subscription
+        required: true
+        type: string
+      sku_name:
+        description: Vault SKU (vault region is always westus2)
+        required: true
+        type: choice
+        options: [standard, premium]
+        default: standard
+      purge_protection_enabled:
+        description: Enable irreversible purge protection
+        required: true
+        type: boolean
+        default: true
+      soft_delete_retention_days:
+        description: Soft-delete retention in whole days (7-90; immutable after creation)
+        required: true
+        type: number
+        default: 90
+      private_endpoints_json:
+        description: Non-secret private_endpoints object ({} leaves vault unreachable)
+        required: true
+        type: string
+        default: "{}"
+      role_assignments_json:
+        description: Non-secret vault role_assignments object keyed by logical name
+        required: true
+        type: string
+        default: "{}"
+      tags_json:
+        description: Non-secret string-to-string tags object
+        required: true
+        type: string
+        default: "{}"
       dry_run:
-        description: Plan only; never apply
+        description: Plan only. Uncheck for a fresh plan followed by hvaandres approval.
+        required: true
         type: boolean
         default: true
 
@@ -33,7 +79,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request' &&
-      vars.KEYVAULT_DEPLOY_ENABLED == 'true'
+      (github.event_name == 'workflow_dispatch' || vars.KEYVAULT_DEPLOY_ENABLED == 'true')
     permissions:
       actions: read
       contents: read
@@ -41,4 +87,6 @@ jobs:
     uses: ./.github/workflows/terraform-deploy.yml
     with:
       stack: KEYVAULT
+      cyber_subscription: ${{ github.event_name == 'workflow_dispatch' && inputs.subscription || '' }}
+      keyvault_request_json: ${{ github.event_name == 'workflow_dispatch' && toJSON(inputs) || '' }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}

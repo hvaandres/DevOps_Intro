@@ -20,6 +20,7 @@ configuration is in `Azure/deployments/keyvault/providers.tf`.
 - [Configuration variables](#configuration-variables)
 - [Noninteractive execution](#noninteractive-execution)
 - [Next steps for each deployment](#next-steps-for-each-deployment)
+- [Request a Key Vault from CI/CD](#request-a-key-vault-from-cicd)
 - [Troubleshooting and cleanup](#troubleshooting-and-cleanup)
 
 ## Requirements
@@ -369,6 +370,30 @@ The example runs from the repository root; when inside `Terraform/`, use
 The backend commands do not write deployment input files or run `plan`/`apply`.
 Review each deployment's required inputs and follow its own guide; do not use
 `init` to silently redirect an existing stack to a new state file.
+
+## Request a Key Vault from CI/CD
+
+Use **Actions → CI and CD — Key Vault → Run workflow**, on `main`, to enter
+the vault name, existing resource group, and vault configuration. Choose
+`cyber-dev`, `cyber-tst`, or `cyber-prd` (default). The pipeline verifies that the
+group belongs to that selected subscription and fixes the vault region to
+`westus2`; it does not create the group or change your local Azure CLI selection.
+
+Leave **dry_run enabled** for a real Terraform plan without apply. To proceed,
+submit the same values with dry-run disabled and have **hvaandres** approve the
+fresh plan in **Review deployments**. Each requested vault gets its own state key.
+All mutating pipelines require hvaandres approval; read-only CI runs automatically.
+
+Actions shows separate steps for `terraform fmt -check`, `terraform init`,
+`terraform validate`, `terraform test` (offline CI), `terraform plan`, approval,
+and `terraform apply` (only after approval and with dry-run disabled). There is no
+standalone `terraform check` command. Azure CLI is used only for read-only
+subscription/group preflight, never to create the vault.
+
+An administrator must first configure the Cyber UUID/identity/backend variables,
+OIDC trust, trusted runner, and protected approval environments. A run initiated
+by hvaandres cannot self-approve; another operator must initiate a mutating run.
+See the [full form, dry-run, and approval setup guide](Azure/tfm-keyvault/README.md#request-a-cyber-key-vault-from-the-actions-form).
 
 ## Troubleshooting and cleanup
 

@@ -57,6 +57,12 @@ Deployment-specific documentation:
 - [Private Link networking](Terraform/Azure/tfm-privateLink-network/README.md)
 - [Key Vault](Terraform/Azure/tfm-keyvault/README.md)
 
+To request a Key Vault in CI/CD, use **Actions → CI and CD — Key Vault → Run
+workflow**. Select `cyber-dev`, `cyber-tst`, or `cyber-prd` (default), supply the
+vault and existing resource-group names, and leave **dry_run** enabled to preview.
+Vaults deploy only to `westus2`; apply requires **hvaandres** approval.
+See the [request form and administrator setup](Terraform/Azure/tfm-keyvault/README.md#request-a-cyber-key-vault-from-the-actions-form).
+
 ## Contribution
 If you would like to contribute to this project, please follow the steps below:
 1. Fork the repository

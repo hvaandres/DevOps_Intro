@@ -156,7 +156,10 @@ Pick any combination — they're independent. You can add just a zone, just reco
 The workflow will:
 - Modify `terraform.tfvars`
 - Run backend-disabled initialization and Terraform validation without Azure credentials
-- Open a **Pull Request** if offline validation succeeds
+- Pause for **hvaandres** approval in the protected `resource-request-approval`
+  environment; its sole required reviewer must be the user `hvaandres`, with
+  self-review disabled and a `main`-only branch rule
+- Rebuild/revalidate the same request and open a **Pull Request** after approval
 - Leave cloud planning and deployment to the post-merge approval-gated pipeline
 
 #### Example: Add multiple DNS records
@@ -251,12 +254,18 @@ Every push to `main` or PR targeting `main` that touches module/shared workflow 
 1. **Format check** — fails if `terraform fmt` finds issues
 2. **Validate** — catches syntax and type errors
 3. **After merge, when enabled:** OIDC-authenticated plan using the Azure Blob backend
-4. **Review:** resource-action summary and saved plan, followed by required `privatelink-apply` environment approval
+4. **Review:** resource-action summary and saved plan, followed by required `privatelink-apply` environment approval by **hvaandres**
 5. **Apply:** applies the exact saved plan from the same commit/run; no-change plans skip apply
 
 PR checks never access Azure or state. Deployment is disabled until `PRIVATELINK_DEPLOY_ENABLED=true` and required setup is complete. Formatting errors fail CI rather than becoming warnings. Plan/apply use separate OIDC identities by default; there is no client secret.
 
 Manual runs default to **dry_run=true**: plan against Blob state, but never enter apply. Disable dry_run explicitly to request a manual deployment, which still requires environment approval. Local offline dry runs use a disabled backend instead and need no Azure access.
+
+Read-only CI steps run automatically. Mutating paths verify the sole required
+reviewer is `hvaandres` and verify the actual approval history before proceeding.
+See the [shared approval configuration](../tfm-keyvault/README.md#required-approval-gateway-for-all-mutating-workflows).
+With self-review disabled, another operator must initiate a request that hvaandres
+will approve. A bot-created PR is a request artifact, not permission to deploy.
 
 ---
 

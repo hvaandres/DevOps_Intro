@@ -220,9 +220,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_deploy_requires_approval_and_saved_plan(self):
         source = (REPO / ".github/workflows/terraform-deploy.yml").read_text()
-        self.assertIn("required_reviewers", source)
-        self.assertIn("prevent_self_review", source)
-        self.assertIn("needs: plan", source)
+        self.assertIn("gate.verifyProtection", source)
+        self.assertIn("gate.verifyApproval", source)
+        self.assertIn("needs: [configuration, plan]", source)
         self.assertIn("cancel-in-progress: false", source)
         self.assertIn("needs.plan.outputs.changed == 'true' && !inputs.dry_run", source)
         self.assertIn("apply -input=false -no-color -lock-timeout=5m .pipeline/deployment.tfplan", source)

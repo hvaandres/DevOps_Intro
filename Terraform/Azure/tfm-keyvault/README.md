@@ -125,11 +125,187 @@ These are manual deployment instructions; local validation does not deploy Azure
 - HSM-backed keys require `sku_name = "premium"`; the standalone key module relies on the caller to select a compatible vault.
 
 ## GitHub Actions CI/CD and Blob state setup
+### Request a Cyber Key Vault from the Actions form
+Open **Actions → CI and CD — Key Vault → Run workflow** and choose `main`.
+The form includes these non-secret fields:
+
+- `subscription`: `cyber-dev`, `cyber-tst`, or **`cyber-prd` (default)**. Production
+  is selected initially, so confirm the selection carefully.
+- `vault_name`: required globally unique vault name, 3–24 letters/digits/hyphens,
+  starting with a letter, ending with a letter/digit, without consecutive hyphens.
+  The request normalizes it to lowercase for consistent state keys.
+- `resource_group_name`: required name of an **existing** group in the selected
+  Cyber subscription, not a resource ID. No group is created by this pipeline.
+- `sku_name`: `standard` (default) or `premium`.
+- `purge_protection_enabled`: true by default. Once enabled it cannot be disabled.
+- `soft_delete_retention_days`: whole number from 7 to 90, default 90.
+  Azure does not permit changing retention after creation.
+- `private_endpoints_json`: object keyed by endpoint logical name, default `{}`.
+  See the example below.
+- `role_assignments_json`: object keyed by assignment logical name, default `{}`.
+- `tags_json`: string-to-string object, default `{}`.
+- `dry_run`: **true by default**. Plans only; no Terraform apply.
+
+The vault's region is fixed in the deployment wrapper to **`westus2`**, not
+inferred from the resource group's metadata region. This is an Azure region, not
+an availability-zone number. RBAC remains enabled, public access is disabled,
+and the firewall remains deny-by-default. Tenant/identity/backend information is
+resolved from trusted repository variables, never entered into the form.
+The request does not create keys, secret values, certificates, or service
+principals. Empty endpoint settings leave a private-only vault unreachable until
+private connectivity is configured. Endpoint location, if supplied, must match
+the endpoint subnet's region; it does not change the vault region.
+
+The pipeline runs offline checks, validates form fields on a hosted runner,
+authenticates the planning identity using OIDC, verifies the configured
+subscription **UUID and Azure display name**, and looks up the group using that
+explicit subscription UUID. Missing/inaccessible groups, unknown subscriptions,
+misconfigured UUID/name mappings, and a group outside the selected subscription
+fail before backend initialization or planning. A group in `cyber-dev` must be
+requested with `cyber-dev` selected; the pipeline never silently switches to a
+different subscription. Subscription display names must be exactly `cyber-dev`,
+`cyber-tst`, and `cyber-prd` (case-insensitive). Access is rechecked after approval.
+
+#### Dry run, then deploy
+1. Submit the form with `dry_run=true`. Inspect the Terraform summary for **create**,
+   **update**, or **no vault changes**, and inspect failures/logs if planning fails.
+   This is a real Azure-backed Terraform plan, not a guarantee that a later apply
+   will succeed under Azure naming, quota, policy, RBAC, or network conditions.
+2. To proceed, submit the **same inputs again** with `dry_run=false`. This creates
+   a fresh plan against current state and pauses at the protected apply job.
+3. **hvaandres** reviews the new plan and chooses **Review deployments → Approve
+   and deploy**. Only that reviewed saved plan is applied.
+
+Alternatively, start with dry-run disabled to plan, pause, and approve within one
+run. A completed dry-run does not have an apply button; it must never authorize
+applying an old plan in another run. No-change plans skip approval/apply. A dry run
+still needs the backend, OIDC, scoped permissions, network access, enable flag, and
+correct approval-environment configuration. It can read state/acquire Blob leases
+but does not apply managed-resource changes.
+
+The Actions UI exposes each Terraform phase as a separate step: formatting check
+(`terraform fmt -check`), initialization (`terraform init`), configuration checks
+(`terraform validate`), offline mocked tests (`terraform test`), saved live plan
+(`terraform plan`), approval, and finally `terraform apply` of that saved plan.
+Terraform has no standalone `terraform check` command. Azure CLI preflight only
+reads subscription/group metadata; Terraform manages all deployed resources.
+
+Each requested vault uses
+`keyvault/<subscription-choice>/<lowercase-vault-name>.tfstate`. Different vault
+requests therefore do not replace the legacy deployment or each other. Repeating
+the same name/subscription targets the same managed vault: supply its complete
+desired endpoint/role/tag configuration, not just incremental additions.
+Do not move existing resources into this workflow without a reviewed state
+migration/import. The request path rejects plans that delete or replace a vault;
+moving its resource group or changing immutable settings requires separate review.
+
+#### Cyber repository variables
+Set **repository-level Actions variables** for each prefix:
+
+- `cyber-dev` → `CYBER_DEV_KEYVAULT`
+- `cyber-tst` → `CYBER_TST_KEYVAULT`
+- `cyber-prd` → `CYBER_PRD_KEYVAULT`
+
+For each prefix configure:
+
+- `<PREFIX>_SUBSCRIPTION_ID`: the corresponding real Cyber subscription UUID.
+- `<PREFIX>_TENANT_ID`: Entra tenant UUID.
+- `<PREFIX>_PLAN_CLIENT_ID` and `<PREFIX>_APPLY_CLIENT_ID`: OIDC app/client UUIDs.
+- `<PREFIX>_BACKEND_ACCOUNT` and `<PREFIX>_BACKEND_CONTAINER`: pre-existing state
+  account/container names.
+- `<PREFIX>_RUNNER_LABELS`: optional runner-label JSON array, default
+  `["self-hosted","linux","azure-terraform"]`. Cyber runners also need Azure CLI.
+- `<PREFIX>_DEPLOY_ENABLED`: literal `true` after setup, including for dry runs.
+
+For example, the production UUID variable is
+`CYBER_PRD_KEYVAULT_SUBSCRIPTION_ID`. These mappings are intentionally not guessed
+from subscription names. No Cyber UUIDs are committed. The Cyber form does **not**
+use `KEYVAULT_TFVARS_JSON` or a `<PREFIX>_TFVARS_JSON`; form inputs are authoritative.
+Do not override shared identity/subscription settings at environment scope.
+Reader on the target subscription/group must let the planning identity verify
+membership; apply needs workload Contributor plus the narrowly scoped rights
+required by the requested RBAC/endpoints. Both identities need state-container
+Storage Blob Data Contributor. Neither command grants itself permissions.
+
+Use the OIDC setup below, with the repository's `main` subject for planning and
+the corresponding protected-environment subject for applying, for example
+`repo:hvaandres/DevOps_Intro:environment:keyvault-cyber-prd-apply` when using legacy
+GitHub subject formatting. Check actual repository OIDC subject configuration.
+
+#### JSON field examples
+`private_endpoints_json`:
+```json
+{
+  "application": {
+    "name": "pe-kv-application",
+    "subnet_id": "/subscriptions/<subscription UUID>/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/vnet-app/subnets/private-endpoints",
+    "resource_group_name": "rg-network",
+    "location": "westus2",
+    "private_dns_zone_ids": [
+      "/subscriptions/<DNS subscription UUID>/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.vaultcore.azure.net"
+    ],
+    "tags": {"managed_by": "terraform"}
+  }
+}
+```
+Replace every placeholder with a real UUID/reference. The pipeline does not
+provision the subnet, DNS zone, VNet links, or runner connectivity.
+`role_assignments_json`:
+```json
+{
+  "application_reader": {
+    "principal_id": "<Entra service principal object UUID>",
+    "principal_type": "ServicePrincipal",
+    "role_definition_name": "Key Vault Secrets User"
+  }
+}
+```
+Each assignment specifies exactly one `role_definition_name` or fully qualified
+`role_definition_id`. Optional `skip_service_principal_aad_check` defaults false.
+Use object IDs, not app/client IDs. `tags_json`, for example:
+```json
+{"environment":"prd","owner":"platform","managed_by":"terraform"}
+```
+Do not place credentials or secret values in any form field.
+
+### Required approval gateway for all mutating workflows
+All repository-changing resource requests and Azure deployments have multiple
+stages and must be approved by **hvaandres**. Read-only CI checks remain automatic.
+Create these GitHub repository environments **before enabling the workflows**:
+
+- `keyvault-cyber-dev-apply`, `keyvault-cyber-tst-apply`,
+  `keyvault-cyber-prd-apply`: Cyber vault deployment approvals.
+- `keyvault-apply`: legacy post-merge single-vault deployment approval.
+- `privatelink-apply`: network deployment approval.
+- `resource-request-approval`: approval before the Private Link request workflow
+  creates a branch/PR; merging that PR is not an Azure deployment approval.
+
+For **each** environment, configure required reviewers as **only the user
+`hvaandres`** (not a team or a list of alternates), enable **Prevent self-review**,
+restrict deployment to exactly one branch rule `main` (no tags), and disable
+administrator bypass where supported. Merely naming an environment in YAML does
+not configure these rules. The workflows check the protection settings and the
+actual approving user's identity through GitHub's API; missing/wrong settings,
+another approver, rejection, or absent approval fail closed.
+
+Because self-review is disabled, **a request initiated by hvaandres cannot also be
+approved by hvaandres**. Another operator must initiate the mutating run. This
+also applies to push-triggered deployment runs initiated by hvaandres.
+Read-only dry runs can still be initiated by hvaandres. Start a **new workflow
+run** after failures, expiration, or changes; do not reuse the Re-run jobs button.
+Review history does not identify attempts, so mutating jobs reject later run
+attempts rather than potentially accepting an old approval.
+Protect `main` and require review of workflow/approval-helper changes. GitHub
+administrators still control repository settings and must not bypass these
+protections. If your GitHub plan does not support required environment reviewers,
+leave mutation/deployment disabled.
+
+### Existing stack CI/CD
 The repository workflows cover both Key Vault and Private Link Network:
 - `ci-keyvault.yml` and `ci-privatelink-network.yml`: credential-free PR checks and, when enabled, deployment after a push/merge to `main`.
 - `terraform-checks.yml`: formatting, backend-disabled validation, and mock tests. PR code never runs on the private deployment runner and receives no Azure token.
 - `terraform-deploy.yml`: OIDC plan against remote Blob state, review summary, required environment approval, then apply of that exact saved plan. Manual runs from `main` default to `dry_run=true`, which skips apply entirely.
-- `add-resource-privatelink.yml`: offline resource-request PR generation only; it never accesses Azure or state.
+- `add-resource-privatelink.yml`: offline validation, hvaandres approval, and then resource-request PR generation; it never accesses Azure or state.
 
 Deployments are **disabled by default**. Leave `KEYVAULT_DEPLOY_ENABLED` and `PRIVATELINK_DEPLOY_ENABLED` unset or `false` while doing local dry runs. Local checks use `init -backend=false` and mock providers; they do not establish that live federation, RBAC, or connectivity works.
 
@@ -137,7 +313,8 @@ Deployments are **disabled by default**. Leave `KEYVAULT_DEPLOY_ENABLED` and `PR
 Use existing Azure Blob Storage or provision it with an administrator before enabling CD. This pipeline does not create its own backend. Set a **storage account name** and **container name**, not a Blob URL, connection string, SAS token, or account key.
 
 Both stacks can share an account/container because they use different blob keys:
-- Key Vault: `keyvault/deployment.tfstate`.
+- Legacy post-merge Key Vault: `keyvault/deployment.tfstate`.
+- Manual Cyber Key Vault requests: `keyvault/<subscription-choice>/<vault-name>.tfstate`.
 - Private Link: `privatelink-network.tfstate` (preserves the existing workflow's key).
 
 The backend uses Entra data-plane authorization (`ARM_USE_AZUREAD=true`) and OIDC. Grant **Storage Blob Data Contributor** on the selected container to both planning and apply service principals, including blob-lease locking rights. Normal initialization does not need account-key lookup or storage-account Reader; Reader is additionally required if you explicitly enable management-plane endpoint discovery.
@@ -164,7 +341,7 @@ For repositories using the legacy subject format, subjects are:
 
 **Verify the repository's actual OIDC subject configuration before creating trust.** New/transferred/renamed repositories may use immutable owner/repository IDs, and customized subjects can differ. Do not print or persist bearer tokens to discover claims. Use the repository OIDC configuration and GitHub's current subject-format documentation. Do not trust all branches, PR subjects, or arbitrary repositories.
 
-Terraform requests short-lived tokens directly using job-scoped `id-token: write`; no `azure/login`, stored client secret, access key, SAS, or token file is required. If your environment must use one service principal, set both client-ID variables to that ID and add both federated credentials, but understand that the planning job then has the same Azure privileges as apply.
+Terraform requests short-lived tokens directly using job-scoped `id-token: write`; no stored client secret, access key, SAS, or token file is required. Cyber requests additionally use `azure/login` with the same OIDC identity for Azure CLI subscription/group preflight; Terraform still authenticates independently with OIDC. If your environment must use one service principal, set both client-ID variables to that ID and add both federated credentials, but understand that the planning job then has the same Azure privileges as apply.
 
 Planning needs workload Reader and enough scoped read/data-plane access to refresh managed resources, plus state-container permissions. Applying needs workload Contributor and any required subnet/private-DNS permissions. Role assignments require narrowly scoped Role Based Access Control Administrator or an equivalent approved custom role; Contributor alone cannot create role assignments or management locks. Pre-register the required Azure resource providers because the roots disable automatic registration. Do not grant Owner by default.
 
@@ -172,12 +349,12 @@ The new Key Vault deployment root uses an **existing resource group**, private/d
 
 ### 3. Configure protected deployment environments
 Create `keyvault-apply` and `privatelink-apply` in the repository settings before enabling deployment:
-1. Set required reviewers, with **Prevent self-review** enabled.
+1. Set the sole required reviewer to **hvaandres**, with **Prevent self-review** enabled.
 2. Select **Selected branches and tags**, with exactly one **branch** rule named `main` and no tag rules.
 3. Disable administrator bypass where supported.
 4. Protect `main` and require CI/review for changes to Terraform and `.github/`.
 
-The plan job checks reviewers/self-review and branch rules via the GitHub API and fails if they are absent. Administrator bypass must be disabled manually; the read API does not reliably expose that setting. YAML environment names alone do not enforce review. Reviewers are only available for public repositories on GitHub Free/Pro/Team; a private repository needs a plan supporting that protection. If unavailable, leave deployment disabled rather than removing the gate.
+The plan job checks the sole hvaandres reviewer/self-review and branch rules via the GitHub API and fails if they are absent. Apply checks the actual approving user's identity again before Azure access. Administrator bypass must be disabled manually; the read API does not reliably expose that setting. YAML environment names alone do not enforce review. Reviewers are only available for public repositories on GitHub Free/Pro/Team; a private repository needs a plan supporting that protection. If unavailable, leave deployment disabled rather than removing the gate.
 
 ### 4. Set repository Actions variables
 For each prefix `KEYVAULT` and `PRIVATELINK`, configure these **repository-level non-secret variables** (do not override shared settings at environment scope):
@@ -199,7 +376,7 @@ Example `KEYVAULT_TFVARS_JSON` (replace names and add actual subnet/DNS referenc
   "tags": {"environment": "dev", "managed_by": "terraform"}
 }
 ```
-An empty endpoint map creates an inaccessible private-only vault until you configure connectivity; it never enables public access. Optional inputs are `sku_name`, `private_endpoints`, `role_assignments`, and `tags`; see `../deployments/keyvault/variables.tf`. The pipeline rejects unknown top-level inputs to avoid accidental secrets/configuration injection.
+An empty endpoint map creates an inaccessible private-only vault until you configure connectivity; it never enables public access. Optional inputs are `sku_name`, `purge_protection_enabled`, `soft_delete_retention_days`, `private_endpoints`, `role_assignments`, and `tags`; see `../deployments/keyvault/variables.tf`. The pipeline rejects unknown top-level inputs to avoid accidental secrets/configuration injection. The wrapper now fixes location to westus2 for all deployments. If a legacy state contains a vault in another region, stop and review the resulting replacement/migration requirements before enabling CD; this change does not migrate resources.
 
 For Private Link, provide real `hub_subscription_id`, `hub_vnet_id`, `hub_vnet_name`, and `hub_resource_group_name`. Optional settings are `location`, `environment`, `tags`, `enable_resource_locks`, `alert_action_group_id`, and `alert_thresholds`. Deployment JSON overrides the placeholder hub values in committed `terraform.tfvars`. Keep zone/spoke/record maps in that committed file so resource-request PRs remain authoritative. Only same-subscription spoke peerings are supported by the current provider wiring.
 
@@ -533,6 +710,10 @@ Description: Key Vault ARM resource ID.
 ### <a name="output_keys"></a> [keys](#output\_keys)
 
 Description: Key IDs and versions keyed by logical name, including versionless URI and ARM IDs.
+
+### <a name="output_location"></a> [location](#output\_location)
+
+Description: Azure region of the Key Vault.
 
 ### <a name="output_name"></a> [name](#output\_name)
 

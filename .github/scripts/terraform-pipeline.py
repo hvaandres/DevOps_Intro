@@ -205,11 +205,17 @@ def prepare():
         raise ValueError("Invalid backend account name")
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])", container) or "--" in container:
         raise ValueError("Invalid backend container name")
-    values = json.loads(require("TFVARS_JSON"))
+    requested = request_values()
+    if requested is not None and os.environ.get("DEPLOY_ENABLED") != "true":
+        raise ValueError("Deployment is not enabled for this Cyber subscription")
+    values = requested if requested is not None else json.loads(require("TFVARS_JSON"))
     if not isinstance(values, dict):
         raise ValueError("TFVARS_JSON must be a non-secret JSON object")
     if stack == "KEYVAULT":
-        allowed = {"vault_name", "resource_group_name", "sku_name", "private_endpoints", "role_assignments", "tags"}
+        allowed = {
+            "vault_name", "resource_group_name", "sku_name", "private_endpoints", "role_assignments", "tags",
+            "purge_protection_enabled", "soft_delete_retention_days",
+        }
         required = {"vault_name", "resource_group_name"}
     else:
         allowed = {
@@ -230,7 +236,10 @@ def prepare():
         raise ValueError("Runner checkout must be clean: .terraform already exists")
     pipeline = root / ".pipeline"
     pipeline.mkdir(exist_ok=False)
-    backend = {"storage_account_name": account, "container_name": container, "key": STATE_KEYS[stack]}
+    state_key = STATE_KEYS[stack] if requested is None else (
+        f"keyvault/{require('CYBER_SUBSCRIPTION')}/{values['vault_name']}.tfstate"
+    )
+    backend = {"storage_account_name": account, "container_name": container, "key": state_key}
     (pipeline / "backend.hcl").write_text("".join(f"{key} = {json.dumps(value)}\n" for key, value in backend.items()))
     (pipeline / "inputs.tfvars.json").write_text(serialized + "\n")
 
@@ -240,10 +249,17 @@ def digest(path):
 
 
 def provenance():
-    return {name: require(name) for name in (
+    values = {name: require(name) for name in (
         "STACK", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT",
         "ARM_TENANT_ID", "ARM_SUBSCRIPTION_ID", "TF_VERSION",
     )}
+    requested = request_values()
+    if requested is not None:
+        values["CYBER_SUBSCRIPTION"] = require("CYBER_SUBSCRIPTION")
+        values["KEYVAULT_REQUEST_SHA256"] = hashlib.sha256(
+            json.dumps(requested, sort_keys=True).encode()
+        ).hexdigest()
+    return values
 
 
 def manifest():
@@ -281,6 +297,12 @@ def verify():
 
 def summarize():
     plan = json.load(sys.stdin)
+    requested = request_values()
+    if requested is not None and any(
+        item.get("type") == "azurerm_key_vault" and "delete" in item["change"]["actions"]
+        for item in plan.get("resource_changes", [])
+    ):
+        raise ValueError("Request would delete or replace a vault; perform a separately reviewed migration")
     changes = [item for item in plan.get("resource_changes", []) if item["change"]["actions"] != ["no-op"]]
     lines = [
         f"## Terraform plan: {html.escape(require('STACK'))}",
@@ -288,6 +310,17 @@ def summarize():
         f"Resources with actions: {len(changes)}",
         "Attribute values and outputs are deliberately omitted. Review code and trusted runner logs before approval.",
     ]
+    if requested is not None:
+        vault_changes = [item for item in changes if item.get("type") == "azurerm_key_vault"]
+        status = "create" if any("create" in item["change"]["actions"] for item in vault_changes) else (
+            "update" if vault_changes else "no vault changes"
+        )
+        lines.extend([
+            f"Requested vault: `{requested['vault_name']}`; region: `westus2`.",
+            f"Target: `{require('CYBER_SUBSCRIPTION')}` / `{require('ARM_SUBSCRIPTION_ID')}`.",
+            f"Resource group: `{html.escape(requested['resource_group_name'])}`.",
+            f"Vault plan result: **{status}**.",
+        ])
     for item in changes[:250]:
         address = html.escape(item["address"]).replace("`", "&#96;")
         actions = ", ".join(item["change"]["actions"])
@@ -305,12 +338,20 @@ def summarize():
 
 
 def main():
-    commands = {"prepare": prepare, "manifest": manifest, "verify": verify, "summarize": summarize}
+    commands = {
+        "configure": configure, "azure-preflight": azure_preflight,
+        "prepare": prepare, "manifest": manifest, "verify": verify, "summarize": summarize,
+    }
     try:
         commands[sys.argv[1]]()
-    except (ValueError, KeyError, IndexError, OSError) as error:
+    except (ValueError, KeyError, IndexError, OSError, TypeError, subprocess.SubprocessError) as error:
         # Configuration errors must never dump settings, plan JSON, or environment contents.
-        print(f"::error::Pipeline check failed ({type(error).__name__}). Check required settings and artifact provenance.", file=sys.stderr)
+        hint = {
+            "configure": "Check the Cyber subscription choice, vault/group names, and typed JSON request fields.",
+            "azure-preflight": "Verify the selected Cyber subscription UUID/display name, existing resource-group membership, Azure access, and connectivity.",
+            "summarize": "The plan could not be reviewed; Cyber requests must not delete or replace a vault.",
+        }.get(sys.argv[1] if len(sys.argv) > 1 else "", "Check required settings, enable flags, and artifact provenance.")
+        print(f"::error::Pipeline check failed ({type(error).__name__}). {hint}", file=sys.stderr)
         sys.exit(1)
 
 

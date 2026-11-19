@@ -41,13 +41,12 @@ permissions:
   contents: read
 
 jobs:
-  request:
+  validate:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
@@ -55,6 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -65,12 +65,70 @@ jobs:
           terraform_wrapper: false
       - name: Validate inputs and update requested resources
         run: python3 .github/scripts/request-privatelink.py
-      - name: Format and validate without Azure or remote state
+      - name: Terraform format requested configuration
         working-directory: Terraform/Azure/tfm-privateLink-network
-        run: |
-          terraform fmt -recursive
-          terraform init -backend=false -input=false -lockfile=readonly
-          terraform validate -no-color
+        run: terraform fmt -recursive
+      - name: Terraform init without Azure or remote state
+        working-directory: Terraform/Azure/tfm-privateLink-network
+        run: terraform init -backend=false -input=false -lockfile=readonly
+      - name: Terraform validate requested configuration
+        working-directory: Terraform/Azure/tfm-privateLink-network
+        run: terraform validate -no-color
+      - name: Verify hvaandres approval protection exists
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const gate = require('./.github/scripts/approval-gate.cjs');
+            await gate.verifyProtection({github, context}, 'resource-request-approval');
+
+  request:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: resource-request-approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      REQUEST_JSON: ${{ toJSON(inputs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify hvaandres approved this request and main has not advanced
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const gate = require('./.github/scripts/approval-gate.cjs');
+            await gate.verifyApproval({github, context}, 'resource-request-approval');
+            const {data} = await github.rest.git.getRef({...context.repo, ref: 'heads/main'});
+            if (data.object.sha !== context.sha) {
+              throw new Error('main has advanced. Start and approve a new request.');
+            }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+          terraform_wrapper: false
+      - name: Rebuild approved request from the same commit and immutable dispatch inputs
+        run: python3 .github/scripts/request-privatelink.py
+      - name: Terraform format approved request
+        working-directory: Terraform/Azure/tfm-privateLink-network
+        run: terraform fmt -recursive
+      - name: Terraform init approved request without remote state
+        working-directory: Terraform/Azure/tfm-privateLink-network
+        run: terraform init -backend=false -input=false -lockfile=readonly
+      - name: Terraform validate approved request before opening PR
+        working-directory: Terraform/Azure/tfm-privateLink-network
+        run: terraform validate -no-color
       - name: Open resource-request PR
         uses: peter-evans/create-pull-request@v6
         with:
@@ -85,6 +143,7 @@ jobs:
           title: Request Private Link resources
           body: |
             Requested changes passed offline Terraform validation. No cloud plan or apply was run.
+            The workflow verified protected-environment approval by hvaandres before opening this PR.
             Review the tfvars diff and merge only after the required checks pass.
             After merge, the configured CD workflow plans against Azure Blob state and requires approval before apply.
 

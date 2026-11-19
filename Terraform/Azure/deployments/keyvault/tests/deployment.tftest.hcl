@@ -9,6 +9,7 @@ mock_provider "azurerm" {
       tenant_id = "11111111-1111-1111-1111-111111111111"
     }
   }
+
 }
 
 variables {
@@ -18,6 +19,11 @@ variables {
 
 run "private_vault_without_objects" {
   command = plan
+
+  assert {
+    condition     = output.vault_location == "westus2"
+    error_message = "Vaults must be in westus2 even when the resource group is in westeurope."
+  }
 
   assert {
     condition     = length(module.keyvault.keys) == 0 && length(module.keyvault.secrets) == 0

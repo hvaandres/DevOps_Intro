@@ -293,6 +293,8 @@ class CyberWorkflowTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", source)
         self.assertIn("default: cyber-prd", source)
         self.assertIn("dry_run:", source)
+        self.assertIn("require_approval:", source)
+        self.assertIn("default: false", source.split("require_approval:\n", 1)[1])
         self.assertIn("default: true", source.split("dry_run:\n", 1)[1])
         self.assertIn("&& toJSON(inputs) || ''", source)
         self.assertNotRegex(source, r"(?m)^\s+run:\s*\$\{\{")

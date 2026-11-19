@@ -65,6 +65,11 @@ on:
         required: true
         type: boolean
         default: true
+      require_approval:
+        description: Temporarily disable approval protection for testing
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -90,3 +95,4 @@ jobs:
       cyber_subscription: ${{ github.event_name == 'workflow_dispatch' && inputs.subscription || '' }}
       keyvault_request_json: ${{ github.event_name == 'workflow_dispatch' && toJSON(inputs) || '' }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      require_approval: ${{ github.event_name == 'workflow_dispatch' && inputs.require_approval }}

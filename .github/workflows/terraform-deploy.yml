@@ -10,6 +10,10 @@ on:
         description: Plan only; skip the apply job
         type: boolean
         default: false
+      require_approval:
+        description: Enforce the GitHub Environment approval gate
+        type: boolean
+        default: true
       cyber_subscription:
         description: Allowlisted Cyber subscription for a manual Key Vault request
         type: string
@@ -80,7 +84,7 @@ jobs:
       BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER }}
       TFVARS_JSON: ${{ vars.TFVARS_JSON }}
       DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
-      REQUIRE_APPROVAL: ${{ vars.REQUIRE_APPROVAL || 'true' }}
+      REQUIRE_APPROVAL: ${{ inputs.require_approval && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -91,7 +95,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           APPLY_ENVIRONMENT: ${{ needs.configuration.outputs.apply_environment }}
-          REQUIRE_APPROVAL: ${{ vars.REQUIRE_APPROVAL || 'true' }}
+          REQUIRE_APPROVAL: ${{ inputs.require_approval && 'true' || 'false' }}
         with:
           script: |
             const gate = require('./.github/scripts/approval-gate.cjs');
@@ -169,7 +173,7 @@ jobs:
       ARM_TENANT_ID: ${{ vars.TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}
       EXPECTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
-      REQUIRE_APPROVAL: ${{ vars.REQUIRE_APPROVAL || 'true' }}
+      REQUIRE_APPROVAL: ${{ inputs.require_approval && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -188,7 +192,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           APPLY_ENVIRONMENT: ${{ needs.configuration.outputs.apply_environment }}
-          REQUIRE_APPROVAL: ${{ vars.REQUIRE_APPROVAL || 'true' }}
+          REQUIRE_APPROVAL: ${{ inputs.require_approval && 'true' || 'false' }}
         with:
           script: |
             const gate = require('./.github/scripts/approval-gate.cjs');

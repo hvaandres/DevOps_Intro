@@ -301,6 +301,8 @@ class CyberWorkflowTests(unittest.TestCase):
     def test_preflight_precedes_backend_and_is_repeated_after_approval(self):
         source = (shared.REPO / ".github/workflows/terraform-deploy.yml").read_text()
         self.assertEqual(source.count("terraform-pipeline.py azure-preflight"), 2)
+        self.assertGreaterEqual(source.count('["ubuntu-latest"]'), 2)
+        self.assertNotIn('["self-hosted","linux","azure-terraform"]', source)
         self.assertLess(source.index("terraform-pipeline.py prepare"), source.index("uses: azure/login@v2"))
         self.assertLess(source.index("terraform-pipeline.py azure-preflight"), source.index("init -input=false"))
         self.assertIn("needs.plan.outputs.changed == 'true' && !inputs.dry_run", source)

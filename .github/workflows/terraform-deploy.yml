@@ -63,7 +63,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment:
       name: ${{ needs.configuration.outputs.plan_environment }}
-    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["self-hosted","linux","azure-terraform"]') }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -156,7 +156,7 @@ jobs:
     if: needs.plan.outputs.changed == 'true' && !inputs.dry_run
     environment:
       name: ${{ needs.configuration.outputs.apply_environment }}
-    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["self-hosted","linux","azure-terraform"]') }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 45
     permissions:
       actions: read

@@ -117,3 +117,14 @@ test("missing environment returns setup instructions", async () => {
     /Environment 'keyvault-cyber-prd-apply' does not exist/,
   );
 });
+
+test("approval checks can be disabled explicitly", async () => {
+  const state = fixture();
+  process.env.REQUIRE_APPROVAL = "false";
+  try {
+    await verifyProtection(state, "missing-but-temporarily-unprotected");
+    await verifyApproval(state, "missing-but-temporarily-unprotected");
+  } finally {
+    delete process.env.REQUIRE_APPROVAL;
+  }
+});

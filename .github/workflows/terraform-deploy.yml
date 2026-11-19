@@ -221,6 +221,7 @@ jobs:
         with:
           artifact-ids: ${{ steps.artifact.outputs.id }}
           path: ${{ env.TF_ROOT }}/.pipeline/
+          merge-multiple: true
       - name: Verify artifact provenance and file integrity
         run: python3 .github/scripts/terraform-pipeline.py verify
       - name: Authenticate Azure preflight with apply OIDC identity

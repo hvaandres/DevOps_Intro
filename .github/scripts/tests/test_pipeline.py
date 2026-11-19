@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 
 REPO = Path(__file__).resolve().parents[3]
@@ -109,6 +110,39 @@ class PipelineTests(unittest.TestCase):
         self.saved_plan()
         os.environ["ARM_CLIENT_ID"] = "44444444-4444-4444-4444-444444444444"
         pipeline.verify()
+
+    def test_downloaded_artifact_verifies_in_clean_apply_checkout(self):
+        self.saved_plan()
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for path in (self.root / ".pipeline").iterdir():
+                bundle.writestr(path.name, path.read_bytes())
+        lock = (self.root / ".terraform.lock.hcl").read_bytes()
+        apply_checkout = Path(self.directory.name) / "apply-checkout"
+        apply_root = apply_checkout / self.root
+        destination = apply_root / ".pipeline"
+        destination.mkdir(parents=True)
+        (apply_root / ".terraform.lock.hcl").write_bytes(lock)
+        # merge-multiple: true extracts the selected artifact directly into path.
+        with zipfile.ZipFile(archive) as bundle:
+            bundle.extractall(destination)
+        self.assertEqual(
+            {path.name for path in destination.iterdir()},
+            {"manifest.json", "backend.hcl", "inputs.tfvars.json", "deployment.tfplan"},
+        )
+        os.chdir(apply_checkout)
+        pipeline.verify()
+
+    def test_artifact_nested_under_its_name_is_not_silently_accepted(self):
+        self.saved_plan()
+        directory = self.root / ".pipeline"
+        nested = directory / "plan-KEYVAULT-123-1"
+        nested.mkdir()
+        for path in directory.iterdir():
+            if path.is_file():
+                path.rename(nested / path.name)
+        with self.assertRaises(FileNotFoundError):
+            pipeline.verify()
 
     def test_modified_plan_rejected(self):
         self.saved_plan()
@@ -217,6 +251,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("id-token: write", source)
         self.assertNotIn("self-hosted", source)
         self.assertIn("init -backend=false", source)
+
+    def test_verified_artifact_download_uses_flat_pipeline_layout(self):
+        source = (REPO / ".github/workflows/terraform-deploy.yml").read_text()
+        download = source.split("uses: actions/download-artifact@v4\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn("artifact-ids: ${{ steps.artifact.outputs.id }}", download)
+        self.assertIn("path: ${{ env.TF_ROOT }}/.pipeline/", download)
+        self.assertIn("merge-multiple: true", download)
+        self.assertNotIn("pattern:", download)
+        self.assertNotIn("name:", download)
+        self.assertLess(source.index("Verify immutable artifact digest"), source.index("uses: actions/download-artifact@v4"))
+        self.assertLess(source.index("uses: actions/download-artifact@v4"), source.index("terraform-pipeline.py verify"))
 
     def test_deploy_requires_approval_and_saved_plan(self):
         source = (REPO / ".github/workflows/terraform-deploy.yml").read_text()

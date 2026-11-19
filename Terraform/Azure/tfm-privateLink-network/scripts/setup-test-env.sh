@@ -16,7 +16,7 @@ set -euo pipefail
 # After running, copy the output values into terraform.tfvars.
 ###############################################################################
 
-LOCATION="eastus2"
+LOCATION="westus2"
 ENVIRONMENT="dev"
 SUFFIX=$(openssl rand -hex 3)  # random suffix for globally unique names
 

@@ -63,7 +63,7 @@ Open **Actions → CI and CD — Key Vault → Run workflow**, using `main`.
 
 | Form field | Requirement / default |
 | --- | --- |
-| `subscription` | `cyber-dev`, `cyber-tst`, or **`cyber-prd` (default)** |
+| `subscription` | `cybersecurity-stg`, `cybersecurity-tst`, or **`cybersecurity-prd` (default)** |
 | `vault_name` | Globally unique, 3–24 letters/digits/hyphens; starts with a letter, ends alphanumeric, no consecutive hyphens; normalized to lowercase |
 | `resource_group_name` | Existing group name in the selected subscription, not an ARM ID |
 | `sku_name` | `standard` (default) or `premium` |
@@ -84,14 +84,14 @@ Start with a dry run and review the summary/logs. To deploy, submit the same res
 - With checks enabled, the helper requires only **hvaandres**, a `main`-only branch policy, and an actual approval. Disable **Prevent self-review** for solo maintenance and administrator bypass where supported. Start a new run rather than reusing an earlier attempt's approval.
 
 ### GitHub variables and OIDC
-Create `keyvault-cyber-dev-plan`, `keyvault-cyber-tst-plan`, and/or `keyvault-cyber-prd-plan` under **Settings → Environments**. Configure these **unprefixed, non-secret variables** in each selected environment:
+Create `keyvault-cybersecurity-stg-plan`, `keyvault-cybersecurity-tst-plan`, and/or `keyvault-cybersecurity-prd-plan` under **Settings → Environments**. Configure these **unprefixed, non-secret variables** in each selected environment:
 - `SUBSCRIPTION_ID`, `TENANT_ID`: actual Azure subscription and tenant UUIDs.
 - `PLAN_CLIENT_ID`, `APPLY_CLIENT_ID`: federated application/client UUIDs, not principal object IDs.
 - `BACKEND_ACCOUNT`, `BACKEND_CONTAINER`: pre-existing storage account/container names, not URLs or access keys.
 - `DEPLOY_ENABLED=true`: required even for Cyber dry runs.
 - `RUNNER_LABELS`: optional JSON array; current default is `["ubuntu-latest"]`. Use trusted self-hosted runners when private endpoints require them. Cyber preflight needs Azure CLI.
 
-Both identities need OIDC federation for the **actual job environment**. Legacy subject example: `repo:hvaandres/DevOps_Intro:environment:keyvault-cyber-prd-plan`; issuer `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`. Verify the repository's actual subject format before configuring trust. The workflows use `ARM_USE_OIDC=true`, `ARM_USE_AZUREAD=true`, and `ARM_USE_CLI=false`; do not configure client secrets, access keys, or SAS tokens.
+Both identities need OIDC federation for the **actual job environment**. Legacy subject example: `repo:hvaandres/DevOps_Intro:environment:keyvault-cybersecurity-prd-plan`; issuer `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`. Verify the repository's actual subject format before configuring trust. The workflows use `ARM_USE_OIDC=true`, `ARM_USE_AZUREAD=true`, and `ARM_USE_CLI=false`; do not configure client secrets, access keys, or SAS tokens.
 
 For **post-merge Key Vault**, the outer workflow checks repository `DEPLOY_ENABLED=true`; jobs use `keyvault-plan` and `keyvault-apply`. Configure the same unprefixed variables for their respective jobs, plus non-secret `TFVARS_JSON` for planning. `KEYVAULT_*` variables are not read by the current workflow. Cyber dispatch uses form inputs instead of `TFVARS_JSON`.
 

@@ -24,16 +24,17 @@ class TeardownTests(unittest.TestCase):
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / ".terraform.lock.hcl").write_text("public-lock-fixture")
         self.request = {
-            "subscription": "cyber-dev", "resource_group_name": "rg-fixture",
-            "state_key": "applications/dev/compute.tfstate", "dry_run": True, "confirmation": "",
+            "subscription": "cybersecurity-stg", "resource_group_name": "rg-fixture",
+            "vault_name": "kv-fixture", "dry_run": True, "confirmation": "",
         }
+        self.derived_state_key = "keyvault/cybersecurity-stg/kv-fixture.tfstate"
         os.environ.update(
             GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REPOSITORY="owner/repo",
             GITHUB_WORKFLOW_REF="owner/repo/.github/workflows/tear-down.yml@refs/heads/main",
             TEARDOWN_ENABLED="true", TEARDOWN_PHASE="plan",
             PLAN_CLIENT_ID=os.environ["ARM_CLIENT_ID"],
             TEARDOWN_CLIENT_ID="44444444-4444-4444-4444-444444444444",
-            TEARDOWN_ALLOWED_STATE_KEYS=json.dumps([self.request["state_key"]]),
+            TEARDOWN_ALLOWED_STATE_KEYS=json.dumps([self.derived_state_key]),
             BACKEND_RESOURCE_GROUP_NAME="rg-state",
             ARM_USE_OIDC="true", ARM_USE_AZUREAD="true", ARM_USE_CLI="false",
             GITHUB_OUTPUT=str(Path(self.directory.name) / "outputs"),
@@ -74,7 +75,7 @@ class TeardownTests(unittest.TestCase):
         }
 
     def real_run(self):
-        self.update(dry_run=False, confirmation=self.request["state_key"])
+        self.update(dry_run=False, confirmation=self.request["vault_name"])
 
     def execution_phase(self):
         self.real_run()
@@ -101,11 +102,10 @@ class TeardownTests(unittest.TestCase):
         teardown.prepare()
         backend = (teardown.PIPELINE / "backend.hcl").read_text()
         self.assertIn('storage_account_name = "kvstate12790"', backend)
-        self.assertIn('key = "applications/dev/compute.tfstate"', backend)
-        self.assertNotIn("keyvault/", backend)
+        self.assertIn(f'key = "{self.derived_state_key}"', backend)
 
     def test_subscription_choices_and_separate_generic_environments(self):
-        for name in ("cyber-dev", "cyber-tst", "cyber-prd"):
+        for name in ("cybersecurity-stg", "cybersecurity-tst", "cybersecurity-prd"):
             self.update(subscription=name)
             teardown.configure()
             output = Path(os.environ["GITHUB_OUTPUT"]).read_text()
@@ -115,10 +115,10 @@ class TeardownTests(unittest.TestCase):
         with self.assertRaises(teardown.SafetyError):
             teardown.configure()
 
-    def test_unsafe_or_unapproved_blob_keys_rejected(self):
-        for key in ("../other.tfstate", "/other.tfstate", "a//other.tfstate", "https://example/a.tfstate", "state", "other.tfstate"):
-            with self.subTest(key=key):
-                self.update(state_key=key)
+    def test_invalid_vault_names_are_rejected(self):
+        for vault in ("kv--bad", "../kv-fixture", "kv bad", "1vault", "a" * 25):
+            with self.subTest(vault=vault):
+                self.update(vault_name=vault)
                 with self.assertRaises(teardown.SafetyError):
                     teardown.settings()
 
@@ -194,7 +194,7 @@ class TeardownTests(unittest.TestCase):
     def test_preflight_scopes_lookups_and_rejects_missing_blob(self):
         teardown.prepare()
         responses = [
-            {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "cyber-dev", "tenantId": os.environ["ARM_TENANT_ID"]},
+            {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "cybersecurity-stg", "tenantId": os.environ["ARM_TENANT_ID"]},
             {"id": teardown.group_id()}, {"id": teardown.backend_id()}, {"exists": True},
         ]
         with patch.object(teardown, "azure", side_effect=responses) as execute:
@@ -203,7 +203,7 @@ class TeardownTests(unittest.TestCase):
         responses[-1] = {"exists": False}
         with patch.object(teardown, "azure", side_effect=responses), self.assertRaisesRegex(teardown.SafetyError, "does not exist"):
             teardown.preflight()
-        responses[0]["name"] = "cyber-prd"
+        responses[0]["name"] = "cybersecurity-prd"
         with patch.object(teardown, "azure", side_effect=responses), self.assertRaisesRegex(teardown.SafetyError, "display name"):
             teardown.preflight()
 
@@ -322,9 +322,9 @@ class TeardownWorkflowTests(unittest.TestCase):
         self.assertIn("name: tear down", source)
         triggers = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
         self.assertEqual(re.findall(r"^  ([a-z_]+):", triggers, re.M), ["workflow_dispatch"])
-        self.assertIn("options: [cyber-dev, cyber-tst, cyber-prd]", source)
-        self.assertIn("state_key:", source)
-        self.assertNotIn("vault_name:", source)
+        self.assertIn("options: [cybersecurity-prd, cybersecurity-stg, cybersecurity-tst]", source)
+        self.assertIn("vault_name:", source)
+        self.assertNotIn("state_key:", source)
         self.assertIn("Terraform/Azure/deployments/teardown", source)
         self.assertNotIn("require_approval:", source)
         self.assertNotIn("${{ inputs.", "\n".join(line for line in source.splitlines() if "run:" in line))

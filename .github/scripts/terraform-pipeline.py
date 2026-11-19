@@ -28,9 +28,9 @@ STATE_KEYS = {
 }
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 CYBER_ENVIRONMENTS = {
-    "cyber-dev": "keyvault-cyber-dev",
-    "cyber-tst": "keyvault-cyber-tst",
-    "cyber-prd": "keyvault-cyber-prd",
+    "cybersecurity-stg": "keyvault-cybersecurity-stg",
+    "cybersecurity-tst": "keyvault-cybersecurity-tst",
+    "cybersecurity-prd": "keyvault-cybersecurity-prd",
 }
 
 

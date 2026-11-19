@@ -375,14 +375,14 @@ Review each deployment's required inputs and follow its own guide; do not use
 
 Use **Actions → CI and CD — Key Vault → Run workflow**, on `main`, to enter
 the vault name, existing resource group, and vault configuration. Choose
-`cyber-dev`, `cyber-tst`, or `cyber-prd` (default). The pipeline verifies that the
+`cybersecurity-stg`, `cybersecurity-tst`, or `cybersecurity-prd` (default). The pipeline verifies that the
 group belongs to that selected subscription and fixes the vault region to
 `westus2`; it does not create the group or change your local Azure CLI selection.
 
 The actual Azure subscription name must match the dispatch choice
 (case-insensitive), and its UUID must match `SUBSCRIPTION_ID` in the selected
-GitHub environment (for example `keyvault-cyber-prd-plan`). An unrelated
-subscription such as `Azure subscription 1` cannot act as an alias for `cyber-prd`.
+GitHub environment (for example `keyvault-cybersecurity-prd-plan`). An unrelated
+subscription such as `Azure subscription 1` cannot act as an alias for `cybersecurity-prd`.
 A mismatch blocks planning/apply even when approval is disabled. The same check
 runs again before apply; no fallback subscription is used.
 

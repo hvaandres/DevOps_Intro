@@ -7,14 +7,14 @@ on:
         description: Azure subscription containing the state-tracked resources
         required: true
         type: choice
-        options: [cyber-dev, cyber-tst, cyber-prd]
-        default: cyber-dev
+        options: [cybersecurity-prd, cybersecurity-stg, cybersecurity-tst]
+        default: cybersecurity-prd
       resource_group_name:
         description: "Deletion boundary: every managed resource must belong to this group"
         required: true
         type: string
-      state_key:
-        description: Exact existing .tfstate blob key in kvstate12790 (including folders)
+      vault_name:
+        description: Existing Key Vault name; the workflow derives its Terraform state key
         required: true
         type: string
       dry_run:
@@ -23,7 +23,7 @@ on:
         type: boolean
         default: true
       confirmation:
-        description: For an actual teardown, type the state key exactly
+        description: For actual teardown, type the vault name exactly
         required: false
         type: string
         default: ""

@@ -3,9 +3,8 @@
 const APPROVER = "hvaandres";
 const ENVIRONMENTS = new Set([
   "keyvault-apply", "privatelink-apply", "resource-request-approval",
-  "keyvault-cyber-dev-apply", "keyvault-cyber-tst-apply", "keyvault-cyber-prd-apply",
-  "keyvault-cyber-dev-plan", "keyvault-cyber-tst-plan", "keyvault-cyber-prd-plan",
-  "terraform-cyber-dev-teardown", "terraform-cyber-tst-teardown", "terraform-cyber-prd-teardown",
+  "keyvault-cybersecurity-stg-plan", "keyvault-cybersecurity-tst-plan", "keyvault-cybersecurity-prd-plan",
+  "terraform-cybersecurity-stg-teardown", "terraform-cybersecurity-tst-teardown", "terraform-cybersecurity-prd-teardown",
 ]);
 
 async function verifyProtection({github, context}, environmentName) {
@@ -67,7 +66,7 @@ async function verifyApproval({github, context}, environmentName) {
 
 function requireTeardownEnforcement(environmentName) {
   if (process.env.REQUIRE_APPROVAL !== "true" ||
-      !/^terraform-cyber-(dev|tst|prd)-teardown$/.test(environmentName)) {
+      !/^terraform-cybersecurity-(stg|tst|prd)-teardown$/.test(environmentName)) {
     throw new Error("Teardown approval cannot be bypassed or use another environment.");
   }
 }

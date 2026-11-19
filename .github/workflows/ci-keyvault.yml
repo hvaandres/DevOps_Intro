@@ -19,8 +19,8 @@ on:
         description: Target Azure subscription (production is the default)
         required: true
         type: choice
-        options: [cyber-prd, cyber-dev, cyber-tst]
-        default: cyber-prd
+        options: [cybersecurity-prd, cybersecurity-stg, cybersecurity-tst]
+        default: cybersecurity-prd
       vault_name:
         description: Globally unique vault name (3-24 letters/digits/hyphens)
         required: true

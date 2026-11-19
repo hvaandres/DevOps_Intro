@@ -58,7 +58,7 @@ Deployment-specific documentation:
 - [Key Vault](Terraform/Azure/tfm-keyvault/README.md)
 
 To request a Key Vault in CI/CD, use **Actions → CI and CD — Key Vault → Run
-workflow**. Select `cyber-dev`, `cyber-tst`, or `cyber-prd` (default), supply the
+workflow**. Select `cybersecurity-prd`, `cybersecurity-stg`, or `cybersecurity-tst` (default), supply the
 vault and existing resource-group names, and leave **dry_run** enabled to preview.
 Vaults deploy only to `westus2`; explicitly enable approval checks for the current
 creation workflow. See its [request form and approval caveats](Terraform/Azure/tfm-keyvault/README.md#request-a-vault-with-github-actions).
@@ -66,11 +66,11 @@ creation workflow. See its [request form and approval caveats](Terraform/Azure/t
 ## Manual state-driven tear down
 **Actions → tear down → Run workflow** is the only trigger: there are no push,
 pull-request, scheduled, or automatic teardown runs. Use `main` and supply:
-- `subscription`: only `cyber-dev` (default), `cyber-tst`, or `cyber-prd`.
+- `subscription`: only `cybersecurity-prd` (default), `cybersecurity-stg`, or `cybersecurity-tst`.
 - `resource_group_name`: boundary for **all managed resources in the selected state**.
-- `state_key`: exact existing blob key, e.g. `applications/dev/compute.tfstate`.
+- `vault_name`: existing Key Vault name; the workflow derives `keyvault/<subscription>/<vault>.tfstate`.
 - `dry_run`: defaults **true**; reports drift and proposed destruction without applying.
-- `confirmation`: for actual destruction, type the exact state key and disable dry run.
+- `confirmation`: for actual destruction, type the exact vault name and disable dry run.
 
 Storage account is fixed to **`kvstate12790`**; container defaults to `tfstate`.
 The [isolated teardown root](Terraform/Azure/deployments/teardown/providers.tf) has
@@ -101,7 +101,7 @@ Optionally set repository `TEARDOWN_RUNNER_LABELS` to a trusted runner-label JSO
 array (default `["ubuntu-latest"]`). Runners need Azure CLI and access to state,
 Azure APIs, and any private data planes. Federate each app only to its own actual
 job environment; legacy execution subject example:
-`repo:hvaandres/DevOps_Intro:environment:terraform-cyber-dev-teardown`.
+`repo:hvaandres/DevOps_Intro:environment:terraform-cybersecurity-stg-teardown`.
 Verify the repository's real OIDC subject format first; use no client secrets or storage keys.
 
 Both identities need scoped state-container **Storage Blob Data Contributor**,

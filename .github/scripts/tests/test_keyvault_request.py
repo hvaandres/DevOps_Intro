@@ -20,7 +20,7 @@ class CyberRequestTests(unittest.TestCase):
     def setUp(self):
         shared.PipelineTests.setUp(self)
         self.request = {
-            "subscription": "cyber-prd",
+            "subscription": "cybersecurity-prd",
             "vault_name": "kv-cyber-request",
             "resource_group_name": "rg-cyber-test",
             "sku_name": "standard",
@@ -32,7 +32,7 @@ class CyberRequestTests(unittest.TestCase):
             "dry_run": True,
         }
         os.environ.update(
-            CYBER_SUBSCRIPTION="cyber-prd", DRY_RUN="true", DEPLOY_ENABLED="true",
+            CYBER_SUBSCRIPTION="cybersecurity-prd", DRY_RUN="true", DEPLOY_ENABLED="true",
             GITHUB_OUTPUT=str(Path(self.directory.name) / "output"),
         )
         self.update_request()
@@ -74,7 +74,7 @@ class CyberRequestTests(unittest.TestCase):
                 self.update_request(require_approval=required)
                 pipeline.configure()
                 self.assertIn(
-                    "plan_environment=keyvault-cyber-prd-plan\n",
+                    "plan_environment=keyvault-cybersecurity-prd-plan\n",
                     Path(os.environ["GITHUB_OUTPUT"]).read_text(),
                 )
                 self.assertNotIn("require_approval", pipeline.request_values())
@@ -122,7 +122,7 @@ class CyberRequestTests(unittest.TestCase):
                 self.assertIn(f"apply_environment={environment}-plan\n", source)
 
     def test_unknown_and_mismatched_subscriptions_fail(self):
-        for subscription in ("other-prd", "cyber-prd\nprefix=KEYVAULT", "cyber-dev"):
+        for subscription in ("other-prd", "cybersecurity-prd\nprefix=KEYVAULT", "cybersecurity-stg"):
             with self.subTest(subscription=subscription):
                 os.environ["CYBER_SUBSCRIPTION"] = subscription
                 with self.assertRaises(ValueError):
@@ -227,15 +227,15 @@ class CyberRequestTests(unittest.TestCase):
             self.assertNotIn("shell", call.kwargs)
 
     def test_wrong_account_uuid_fails_before_group_lookup(self):
-        replacement = {"id": os.environ["ARM_CLIENT_ID"], "name": "cyber-prd"}
+        replacement = {"id": os.environ["ARM_CLIENT_ID"], "name": "cybersecurity-prd"}
         with self.assertRaises(pipeline.SubscriptionMismatchError):
             self.preflight([replacement])
 
     def test_wrong_account_name_is_rejected_even_when_uuid_matches(self):
-        for actual_name in ("cyber-dev", "cyber-tst", "Azure subscription 1", "cyber-prd-copy", "", None):
+        for actual_name in ("cybersecurity-stg", "cybersecurity-tst", "Azure subscription 1", "cybersecurity-prd-copy", "", None):
             with self.subTest(actual_name=actual_name):
                 replacement = {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": actual_name}
-                with self.assertRaisesRegex(pipeline.SubscriptionMismatchError, "workflow_dispatch selected cyber-prd"):
+                with self.assertRaisesRegex(pipeline.SubscriptionMismatchError, "workflow_dispatch selected cybersecurity-prd"):
                     self.preflight([replacement])
 
     def test_every_dispatch_choice_requires_the_actual_subscription_name(self):
@@ -245,13 +245,13 @@ class CyberRequestTests(unittest.TestCase):
                 self.update_request(subscription=selected)
                 execute = self.preflight()
                 self.assertEqual(execute.call_count, 2)
-                wrong = "cyber-tst" if selected != "cyber-tst" else "cyber-prd"
+                wrong = "cybersecurity-tst" if selected != "cybersecurity-tst" else "cybersecurity-prd"
                 with self.assertRaises(pipeline.SubscriptionMismatchError):
                     self.preflight([{"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": wrong}])
 
     def test_subscription_name_matching_is_case_insensitive(self):
         responses = self.azure_results()
-        responses[0]["name"] = "CYBER-PRD"
+        responses[0]["name"] = "CYBERSECURITY-PRD"
         self.assertEqual(self.preflight(responses).call_count, 2)
 
     def test_subscription_name_mismatch_stops_before_group_lookup(self):
@@ -281,7 +281,7 @@ class CyberRequestTests(unittest.TestCase):
                     pipeline.main()
         self.assertEqual(exited.exception.code, 1)
         message = errors.getvalue()
-        self.assertIn("workflow_dispatch selected cyber-prd", message)
+        self.assertIn("workflow_dispatch selected cybersecurity-prd", message)
         self.assertIn("Azure subscription 1", message)
         self.assertIn("SUBSCRIPTION_ID", message)
         self.assertIn("No fallback subscription", message)
@@ -312,7 +312,7 @@ class CyberRequestTests(unittest.TestCase):
         os.environ["TFVARS_JSON"] = "invalid legacy input is ignored"
         pipeline.prepare()
         backend = (self.root / ".pipeline/backend.hcl").read_text()
-        self.assertIn('key = "keyvault/cyber-prd/kv-cyber-request.tfstate"', backend)
+        self.assertIn('key = "keyvault/cybersecurity-prd/kv-cyber-request.tfstate"', backend)
         values = json.loads((self.root / ".pipeline/inputs.tfvars.json").read_text())
         self.assertEqual(values["resource_group_name"], "rg-cyber-test")
         self.assertNotIn("location", values)
@@ -378,7 +378,7 @@ class CyberWorkflowTests(unittest.TestCase):
     def test_dispatch_has_only_cyber_choices_and_safe_defaults(self):
         source = (shared.REPO / ".github/workflows/ci-keyvault.yml").read_text()
         self.assertIn("workflow_dispatch:", source)
-        self.assertIn("default: cyber-prd", source)
+        self.assertIn("default: cybersecurity-prd", source)
         self.assertIn("dry_run:", source)
         self.assertIn("require_approval:", source)
         self.assertIn("default: false", source.split("require_approval:\n", 1)[1])

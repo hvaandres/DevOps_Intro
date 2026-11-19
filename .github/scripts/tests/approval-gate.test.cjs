@@ -42,10 +42,10 @@ test("only hvaandres can approve a protected deployment", async () => {
   await verifyApproval(state, "keyvault-apply");
 });
 
-for (const subscription of ["dev", "tst", "prd"]) {
+for (const subscription of ["stg", "tst", "prd"]) {
   test(`teardown ${subscription} requires its own explicit approval`, async () => {
     const state = fixture();
-    const name = `terraform-cyber-${subscription}-teardown`;
+    const name = `terraform-cybersecurity-${subscription}-teardown`;
     process.env.REQUIRE_APPROVAL = "true";
     try {
       await verifyTeardownProtection(state, name);
@@ -66,8 +66,8 @@ test("teardown has no approval bypass, even when legacy checks are disabled", as
     if (value === undefined) delete process.env.REQUIRE_APPROVAL;
     else process.env.REQUIRE_APPROVAL = value;
     try {
-      await assert.rejects(verifyTeardownProtection(state, "terraform-cyber-dev-teardown"), /cannot be bypassed/);
-      await assert.rejects(verifyTeardownApproval(state, "terraform-cyber-dev-teardown"), /cannot be bypassed/);
+      await assert.rejects(verifyTeardownProtection(state, "terraform-cybersecurity-stg-teardown"), /cannot be bypassed/);
+      await assert.rejects(verifyTeardownApproval(state, "terraform-cybersecurity-stg-teardown"), /cannot be bypassed/);
     } finally {
       delete process.env.REQUIRE_APPROVAL;
     }
@@ -77,7 +77,7 @@ test("teardown has no approval bypass, even when legacy checks are disabled", as
 test("teardown cannot reuse the planning or ordinary deployment environment", async () => {
   process.env.REQUIRE_APPROVAL = "true";
   try {
-    for (const name of ["terraform-cyber-dev-teardown-plan", "keyvault-apply", "keyvault-cyber-dev-plan"]) {
+    for (const name of ["terraform-cybersecurity-stg-teardown-plan", "keyvault-apply", "keyvault-cybersecurity-stg-plan"]) {
       await assert.rejects(verifyTeardownApproval(fixture(), name), /another environment/);
     }
   } finally {
@@ -114,8 +114,7 @@ test("independent review also works if an environment still prevents self-review
 
 for (const name of [
   "privatelink-apply", "resource-request-approval",
-  "keyvault-cyber-dev-apply", "keyvault-cyber-tst-apply", "keyvault-cyber-prd-apply",
-  "keyvault-cyber-dev-plan", "keyvault-cyber-tst-plan", "keyvault-cyber-prd-plan",
+  "keyvault-cybersecurity-stg-plan", "keyvault-cybersecurity-tst-plan", "keyvault-cybersecurity-prd-plan",
 ]) {
   test(`${name} uses the same named approval policy`, async () => {
     const state = fixture();
@@ -182,8 +181,8 @@ test("missing environment returns setup instructions", async () => {
   const error = Object.assign(new Error("Not Found"), {status: 404});
   state.github.rest.repos.getEnvironment = async () => { throw error; };
   await assert.rejects(
-    verifyProtection(state, "keyvault-cyber-prd-apply"),
-    /Environment 'keyvault-cyber-prd-apply' does not exist/,
+    verifyProtection(state, "keyvault-cybersecurity-prd-plan"),
+    /Environment 'keyvault-cybersecurity-prd-plan' does not exist/,
   );
 });
 

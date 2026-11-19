@@ -80,7 +80,7 @@ class CyberRequestTests(unittest.TestCase):
                 pipeline.configure()
                 source = Path(os.environ["GITHUB_OUTPUT"]).read_text()
                 self.assertIn(f"plan_environment={environment}-plan\n", source)
-                self.assertIn(f"apply_environment={environment}-apply\n", source)
+                self.assertIn(f"apply_environment={environment}-plan\n", source)
 
     def test_unknown_and_mismatched_subscriptions_fail(self):
         for subscription in ("other-prd", "cyber-prd\nprefix=KEYVAULT", "cyber-dev"):

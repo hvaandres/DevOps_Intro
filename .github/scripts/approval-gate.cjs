@@ -4,6 +4,7 @@ const APPROVER = "hvaandres";
 const ENVIRONMENTS = new Set([
   "keyvault-apply", "privatelink-apply", "resource-request-approval",
   "keyvault-cyber-dev-apply", "keyvault-cyber-tst-apply", "keyvault-cyber-prd-apply",
+  "keyvault-cyber-dev-plan", "keyvault-cyber-tst-plan", "keyvault-cyber-prd-plan",
 ]);
 
 async function verifyProtection({github, context}, environmentName) {

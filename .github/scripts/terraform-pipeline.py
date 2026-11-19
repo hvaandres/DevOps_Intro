@@ -150,7 +150,7 @@ def configure():
     if values is not None:
         base_environment = CYBER_ENVIRONMENTS[subscription]
         plan_environment = f"{base_environment}-plan"
-        apply_environment = f"{base_environment}-apply"
+        apply_environment = plan_environment
     else:
         plan_environment = "keyvault-plan" if stack == "KEYVAULT" else "privatelink-plan"
         apply_environment = "keyvault-apply" if stack == "KEYVAULT" else "privatelink-apply"

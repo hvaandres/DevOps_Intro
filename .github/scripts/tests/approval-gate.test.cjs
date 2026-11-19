@@ -45,6 +45,7 @@ test("only hvaandres can approve a protected deployment", async () => {
 for (const name of [
   "privatelink-apply", "resource-request-approval",
   "keyvault-cyber-dev-apply", "keyvault-cyber-tst-apply", "keyvault-cyber-prd-apply",
+  "keyvault-cyber-dev-plan", "keyvault-cyber-tst-plan", "keyvault-cyber-prd-plan",
 ]) {
   test(`${name} uses the same named approval policy`, async () => {
     const state = fixture();

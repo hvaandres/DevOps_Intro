@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path("Terraform/Azure/deployments/teardown")
 ACCOUNT = "kvstate12790"
-SUBSCRIPTIONS = {"cybersecurity-prd", "cybersecurity-stg", "cybersecurity-tst"}
+SUBSCRIPTIONS = {"cybersecurity-stg", "cybersecurity-tst", "cybersecurity-prd"}
 PROVIDER = 'provider["registry.terraform.io/hashicorp/azurerm"]'
 FILES = {"backend.hcl", "backend-target.json", "target.json", "drift.json", "destroy.tfplan"}
 PIPELINE = ROOT / ".pipeline"
@@ -41,27 +41,24 @@ def real_uuid(value):
 def request():
     document = json.loads(require("TEARDOWN_REQUEST_JSON"))
     if not isinstance(document, dict) or set(document) != {
-        "subscription", "resource_group_name", "vault_name", "dry_run", "confirmation",
+        "subscription", "resource_group_name", "state_key", "dry_run", "confirmation",
     }:
         raise SafetyError("Unexpected teardown fields.")
     if document["subscription"] not in SUBSCRIPTIONS:
-        raise SafetyError("Choose cybersecurity-prd, cybersecurity-stg, or cybersecurity-tst.")
-    vault = document["vault_name"]
+        raise SafetyError("Choose cybersecurity-stg, cybersecurity-tst, or cybersecurity-prd.")
+    key, group = document["state_key"], document["resource_group_name"]
     if (
-        not isinstance(vault, str)
-        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]", vault)
-        or "--" in vault
+        not isinstance(key, str) or len(key) > 512 or not key.endswith(".tfstate")
+        or not re.fullmatch(r"[A-Za-z0-9_./-]+", key)
+        or any(part in {"", ".", ".."} for part in key.split("/"))
     ):
-        raise SafetyError("Invalid Key Vault name.")
-    key = f"keyvault/{document['subscription']}/{vault.lower()}.tfstate"
-    group = document["resource_group_name"]
+        raise SafetyError("Provide an exact relative .tfstate blob key, without traversal or URLs.")
     if not isinstance(group, str) or not re.fullmatch(r"[A-Za-z0-9_().-]{1,90}", group) or group.endswith("."):
         raise SafetyError("Invalid resource group name.")
     if type(document["dry_run"]) is not bool or not isinstance(document["confirmation"], str):
         raise SafetyError("Invalid dry-run or confirmation value.")
-    if not document["dry_run"] and document["confirmation"].lower() != vault.lower():
-        raise SafetyError("Actual destruction requires confirmation equal to the exact vault name.")
-    document["state_key"] = key
+    if not document["dry_run"] and document["confirmation"] != key:
+        raise SafetyError("Actual destruction requires confirmation equal to the exact state key.")
     return document
 
 
@@ -134,7 +131,7 @@ def terraform(arguments, label, accepted=(0,)):
 
 def configure():
     selected = context()
-    base = f"terraform-{selected['subscription']}"
+    base = f"azure-{selected['subscription']}"
     with Path(require("GITHUB_OUTPUT")).open("a") as stream:
         stream.write(f"plan_environment={base}-teardown-plan\ndestroy_environment={base}-teardown\n")
 
@@ -272,10 +269,11 @@ def inspect_state(document):
                 raise SafetyError("Resolve deposed or tainted instances in the owning deployment first.")
             addr = address(resource, instance)
             record = resource_identity(resource["type"], instance["attributes"])
-            if addr in resources or record["id"].lower() in identities:
+            remote_key = (record["type"], record["id"].lower())
+            if addr in resources or remote_key in identities:
                 raise SafetyError("Duplicate resource addresses or remote identities in state.")
             resources[addr] = record
-            identities.add(record["id"].lower())
+            identities.add(remote_key)
     if not resources:
         raise SafetyError("State is empty or already destroyed; no managed resources were found.")
     return {

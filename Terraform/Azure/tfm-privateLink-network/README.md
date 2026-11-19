@@ -254,7 +254,7 @@ Every push to `main` or PR targeting `main` that touches module/shared workflow 
 1. **Format check** — fails if `terraform fmt` finds issues
 2. **Validate** — catches syntax and type errors
 3. **After merge, when enabled:** OIDC-authenticated plan using the Azure Blob backend
-4. **Review:** resource-action summary and saved plan, followed by required `privatelink-apply` environment approval by **hvaandres**
+4. **Review:** resource-action summary and saved plan, followed by required `azure-apply` environment approval by **hvaandres**
 5. **Apply:** applies the exact saved plan from the same commit/run; no-change plans skip apply
 
 PR checks never access Azure or state. Deployment is disabled until `PRIVATELINK_DEPLOY_ENABLED=true` and required setup is complete. Formatting errors fail CI rather than becoming warnings. Plan/apply use separate OIDC identities by default; there is no client secret.

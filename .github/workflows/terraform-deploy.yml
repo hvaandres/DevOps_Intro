@@ -83,7 +83,7 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}
       BACKEND_ACCOUNT: ${{ vars.BACKEND_ACCOUNT }}
       BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER }}
-      TFVARS_JSON: ${{ vars.TFVARS_JSON }}
+      TFVARS_JSON: ${{ vars[format('{0}_TFVARS_JSON', inputs.stack)] }}
       DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
       REQUIRE_APPROVAL: ${{ inputs.require_approval && 'true' || 'false' }}
     steps:

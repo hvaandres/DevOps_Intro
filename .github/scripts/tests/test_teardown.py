@@ -7,6 +7,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -25,16 +28,15 @@ class TeardownTests(unittest.TestCase):
         (self.root / ".terraform.lock.hcl").write_text("public-lock-fixture")
         self.request = {
             "subscription": "cybersecurity-stg", "resource_group_name": "rg-fixture",
-            "vault_name": "kv-fixture", "dry_run": True, "confirmation": "",
+            "state_key": "applications/dev/compute.tfstate", "dry_run": True, "confirmation": "",
         }
-        self.derived_state_key = "keyvault/cybersecurity-stg/kv-fixture.tfstate"
         os.environ.update(
             GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REPOSITORY="owner/repo",
             GITHUB_WORKFLOW_REF="owner/repo/.github/workflows/tear-down.yml@refs/heads/main",
             TEARDOWN_ENABLED="true", TEARDOWN_PHASE="plan",
             PLAN_CLIENT_ID=os.environ["ARM_CLIENT_ID"],
             TEARDOWN_CLIENT_ID="44444444-4444-4444-4444-444444444444",
-            TEARDOWN_ALLOWED_STATE_KEYS=json.dumps([self.derived_state_key]),
+            TEARDOWN_ALLOWED_STATE_KEYS=json.dumps([self.request["state_key"]]),
             BACKEND_RESOURCE_GROUP_NAME="rg-state",
             ARM_USE_OIDC="true", ARM_USE_AZUREAD="true", ARM_USE_CLI="false",
             GITHUB_OUTPUT=str(Path(self.directory.name) / "outputs"),
@@ -75,7 +77,7 @@ class TeardownTests(unittest.TestCase):
         }
 
     def real_run(self):
-        self.update(dry_run=False, confirmation=self.request["vault_name"])
+        self.update(dry_run=False, confirmation=self.request["state_key"])
 
     def execution_phase(self):
         self.real_run()
@@ -102,23 +104,24 @@ class TeardownTests(unittest.TestCase):
         teardown.prepare()
         backend = (teardown.PIPELINE / "backend.hcl").read_text()
         self.assertIn('storage_account_name = "kvstate12790"', backend)
-        self.assertIn(f'key = "{self.derived_state_key}"', backend)
+        self.assertIn('key = "applications/dev/compute.tfstate"', backend)
+        self.assertNotIn("keyvault/", backend)
 
     def test_subscription_choices_and_separate_generic_environments(self):
         for name in ("cybersecurity-stg", "cybersecurity-tst", "cybersecurity-prd"):
             self.update(subscription=name)
             teardown.configure()
             output = Path(os.environ["GITHUB_OUTPUT"]).read_text()
-            self.assertIn(f"plan_environment=terraform-{name}-teardown-plan", output)
-            self.assertIn(f"destroy_environment=terraform-{name}-teardown\n", output)
+            self.assertIn(f"plan_environment=azure-{name}-teardown-plan", output)
+            self.assertIn(f"destroy_environment=azure-{name}-teardown\n", output)
         self.update(subscription="other")
         with self.assertRaises(teardown.SafetyError):
             teardown.configure()
 
-    def test_invalid_vault_names_are_rejected(self):
-        for vault in ("kv--bad", "../kv-fixture", "kv bad", "1vault", "a" * 25):
-            with self.subTest(vault=vault):
-                self.update(vault_name=vault)
+    def test_unsafe_or_unapproved_blob_keys_rejected(self):
+        for key in ("../other.tfstate", "/other.tfstate", "a//other.tfstate", "https://example/a.tfstate", "state", "other.tfstate"):
+            with self.subTest(key=key):
+                self.update(state_key=key)
                 with self.assertRaises(teardown.SafetyError):
                     teardown.settings()
 
@@ -180,6 +183,22 @@ class TeardownTests(unittest.TestCase):
         document = {**self.document, "resources": [self.resource("azurerm_resource_group", "workload", teardown.group_id())]}
         self.assertEqual(len(teardown.inspect_state(document)["resources"]), 1)
 
+    def test_network_associations_can_share_an_arm_id_with_a_subnet(self):
+        identity = self.arm("Microsoft.Network/virtualNetworks/app/subnets/private")
+        document = {**self.document, "resources": [
+            self.resource("azurerm_subnet", "subnet", identity),
+            self.resource("azurerm_subnet_network_security_group_association", "association", identity),
+        ]}
+        self.assertEqual(len(teardown.inspect_state(document)["resources"]), 2)
+
+    def test_duplicate_same_type_remote_identities_are_rejected(self):
+        document = copy.deepcopy(self.document)
+        duplicate = copy.deepcopy(document["resources"][0])
+        duplicate["name"] = "duplicate"
+        document["resources"].append(duplicate)
+        with self.assertRaisesRegex(teardown.SafetyError, "Duplicate"):
+            teardown.inspect_state(document)
+
     def test_keyvault_data_plane_ownership_is_explicitly_validated(self):
         owner = self.arm("Microsoft.KeyVault/vaults/kv-fixture")
         values = {
@@ -214,6 +233,15 @@ class TeardownTests(unittest.TestCase):
         with patch.object(teardown, "azure", return_value={"value": [{"id": teardown.group_id() + "/providers/Microsoft.Authorization/locks/admin"}]}):
             with self.assertRaisesRegex(teardown.SafetyError, "inherited or unmanaged"):
                 teardown.check_locks(target)
+
+    def test_unrelated_locks_are_ignored_but_subscription_locks_block(self):
+        target = teardown.inspect_state(self.document)
+        unrelated = self.arm("Microsoft.Storage/storageAccounts/unrelated") + "/providers/Microsoft.Authorization/locks/protect"
+        with patch.object(teardown, "azure", return_value={"value": [{"id": unrelated}]}):
+            teardown.check_locks(target)
+        inherited = f"/subscriptions/{os.environ['ARM_SUBSCRIPTION_ID']}/providers/Microsoft.Authorization/locks/admin"
+        with patch.object(teardown, "azure", return_value={"value": [{"id": inherited}]}), self.assertRaises(teardown.SafetyError):
+            teardown.check_locks(target)
 
     def test_non_destroy_new_resources_and_changed_ids_rejected(self):
         target = teardown.inspect_state(self.document)
@@ -317,14 +345,28 @@ class TeardownTests(unittest.TestCase):
 
 
 class TeardownWorkflowTests(unittest.TestCase):
+    def test_creation_environments_are_generic_and_stack_inputs_remain_isolated(self):
+        for stack in ("KEYVAULT", "PRIVATELINK"):
+            with self.subTest(stack=stack), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "outputs"
+                with patch.dict(os.environ, {
+                    "STACK": stack, "TF_ROOT": shared.pipeline.ROOTS[stack],
+                    "GITHUB_REF": "refs/heads/main", "GITHUB_OUTPUT": str(output),
+                    "CYBER_SUBSCRIPTION": "", "KEYVAULT_REQUEST_JSON": "",
+                }):
+                    shared.pipeline.configure()
+                self.assertEqual(output.read_text(), "plan_environment=azure-plan\napply_environment=azure-apply\n")
+        source = (shared.REPO / ".github/workflows/terraform-deploy.yml").read_text()
+        self.assertIn("vars[format('{0}_TFVARS_JSON', inputs.stack)]", source)
+        self.assertNotIn("TFVARS_JSON: ${{ vars.TFVARS_JSON }}", source)
     def test_workflow_is_manual_generic_and_dry_run_first(self):
         source = (shared.REPO / ".github/workflows/tear-down.yml").read_text()
         self.assertIn("name: tear down", source)
         triggers = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
         self.assertEqual(re.findall(r"^  ([a-z_]+):", triggers, re.M), ["workflow_dispatch"])
         self.assertIn("options: [cybersecurity-prd, cybersecurity-stg, cybersecurity-tst]", source)
-        self.assertIn("vault_name:", source)
-        self.assertNotIn("state_key:", source)
+        self.assertIn("state_key:", source)
+        self.assertNotIn("vault_name:", source)
         self.assertIn("Terraform/Azure/deployments/teardown", source)
         self.assertNotIn("require_approval:", source)
         self.assertNotIn("${{ inputs.", "\n".join(line for line in source.splitlines() if "run:" in line))
@@ -365,6 +407,43 @@ class TeardownWorkflowTests(unittest.TestCase):
         self.assertIn('scope      = azurerm_private_endpoint.this[each.key].id', source)
         wrapper = (shared.REPO / "Terraform/Azure/deployments/keyvault/main.tf").read_text()
         self.assertIn("deletion_protection_enabled = true", wrapper)
+
+
+@unittest.skipUnless(shutil.which("terraform"), "Terraform not installed")
+class StateOnlyTerraformTests(unittest.TestCase):
+    def test_state_retains_inventory_and_dependencies_without_workload_config(self):
+        # Built-in terraform_data has no cloud or filesystem side effects beyond
+        # its temporary local state. No external provider download is needed.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "main.tf"
+            config.write_text(
+                'resource "terraform_data" "resource" { input = "public-fixture" }\n'
+                'resource "terraform_data" "protection" { depends_on = [terraform_data.resource] }\n'
+            )
+
+            def run(*args):
+                result = subprocess.run(
+                    ["terraform", f"-chdir={root}", *args], check=True, text=True,
+                    capture_output=True, timeout=60,
+                )
+                return result.stdout
+
+            run("init", "-backend=false", "-input=false")
+            run("apply", "-auto-approve", "-input=false", "-no-color")
+            state = json.loads(run("state", "pull"))
+            protection = next(item for item in state["resources"] if item["name"] == "protection")
+            self.assertIn("terraform_data.resource", protection["instances"][0]["dependencies"])
+            config.write_text('terraform { required_version = ">= 1.9" }\n')
+            run("plan", "-refresh-only", "-input=false", "-no-color", "-out=refresh.tfplan")
+            refresh = json.loads(run("show", "-json", "refresh.tfplan"))
+            self.assertEqual(refresh.get("resource_drift", []), [])
+            run("plan", "-destroy", "-input=false", "-no-color", "-out=destroy.tfplan")
+            destroy = json.loads(run("show", "-json", "destroy.tfplan"))
+            changes = destroy["resource_changes"]
+            self.assertEqual({item["address"] for item in changes}, {"terraform_data.resource", "terraform_data.protection"})
+            self.assertTrue(all(item["change"]["actions"] == ["delete"] for item in changes))
+            # Plan only: do not execute destruction, even for local fixtures.
 
 
 if __name__ == "__main__":

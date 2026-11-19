@@ -58,19 +58,76 @@ Deployment-specific documentation:
 - [Key Vault](Terraform/Azure/tfm-keyvault/README.md)
 
 To request a Key Vault in CI/CD, use **Actions → CI and CD — Key Vault → Run
-workflow**. Select `cybersecurity-prd`, `cybersecurity-stg`, or `cybersecurity-tst` (default), supply the
+workflow**. Select `cybersecurity-stg`, `cybersecurity-tst`, or `cybersecurity-prd` (default), supply the
 vault and existing resource-group names, and leave **dry_run** enabled to preview.
 Vaults deploy only to `westus2`; explicitly enable approval checks for the current
 creation workflow. See its [request form and approval caveats](Terraform/Azure/tfm-keyvault/README.md#request-a-vault-with-github-actions).
 
+## Azure-wide GitHub environments
+Use the **`azure-` prefix**, not a service name. `<subscription>` is exactly
+`cybersecurity-stg`, `cybersecurity-tst`, or `cybersecurity-prd`.
+
+| Operation | GitHub environment |
+| --- | --- |
+| Cyber creation request | `azure-<subscription>-plan` |
+| Existing non-Cyber deployment: plan / apply | `azure-plan` / `azure-apply` |
+| Manual teardown: plan / destroy | `azure-<subscription>-teardown-plan` / `azure-<subscription>-teardown` |
+
+Production examples: `azure-cybersecurity-prd-plan`,
+`azure-cybersecurity-prd-teardown-plan`, and `azure-cybersecurity-prd-teardown`.
+Current Cyber creation routing uses the **same `*-plan` environment for plan and
+apply**; the name does not imply a separate post-plan approval. Teardown uses two
+distinct environments and requires explicit approval before destruction.
+
+### Migrate existing environments
+Changing repository files does **not** migrate live GitHub environments or Entra trust.
+
+1. **Pause deployment while migrating.** Leave the applicable `DEPLOY_ENABLED`,
+   `PRIVATELINK_DEPLOY_ENABLED`, and `TEARDOWN_ENABLED` flags unset/false. Under
+   **Settings → Environments**, create the replacements:
+   - `key-vault-cyber-prd-plan` (or `keyvault-cybersecurity-prd-plan`) → `azure-cybersecurity-prd-plan`.
+   - Other Cyber creation environments → `azure-<subscription>-plan`.
+   - `keyvault-plan` / `privatelink-plan` → shared `azure-plan`;
+     `keyvault-apply` / `privatelink-apply` → shared `azure-apply`.
+   - `terraform-<subscription>-teardown-plan` / `terraform-<subscription>-teardown`
+     → the corresponding `azure-` names.
+2. **Copy and review variables.** Preserve the correct subscription, tenant, client
+   IDs, and backend settings; do not blindly merge identities from old environments.
+   In shared `azure-plan`, move non-secret workload inputs to
+   `KEYVAULT_TFVARS_JSON` and `PRIVATELINK_TFVARS_JSON`, not one `TFVARS_JSON`.
+   Identity/backend variables remain unprefixed. Cyber requests still use form
+   inputs; teardown uses `TEARDOWN_ALLOWED_STATE_KEYS` and its separate client ID.
+3. **Recreate protection rules.** Protected apply/teardown environments require
+   **hvaandres** as the sole reviewer and exactly one `main` branch rule. Disable
+   administrator bypass where supported; allow self-review for solo maintenance.
+   Preserve creation protections and keep teardown identities separate.
+4. **Update Entra federated credentials for each job's new environment.** For legacy
+   GitHub subjects, production creation uses
+   `repo:hvaandres/DevOps_Intro:environment:azure-cybersecurity-prd-plan`;
+   destruction uses
+   `repo:hvaandres/DevOps_Intro:environment:azure-cybersecurity-prd-teardown`.
+   Configure the planning identity for its own plan environment too. Issuer remains
+   `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`.
+   Verify the repository's actual subject format; customized/immutable subjects differ.
+5. **Verify before retiring old names.** Enable only the configured workflow, start
+   a **new manual dry run on `main`**, and check subscription, backend, OIDC, and
+   approval configuration. Teardown must not apply in dry-run mode. Retire old
+   environments/federated trust only after the replacement path is verified;
+   approvals from old environments or previous runs do not transfer.
+
+Environment renaming does not require renaming Azure resources, state containers,
+or blob keys. Keep the existing backend locations; do not initialize a new empty
+state as part of this migration. See [teardown setup](#one-time-administrator-setup)
+for its required variables and permissions.
+
 ## Manual state-driven tear down
 **Actions → tear down → Run workflow** is the only trigger: there are no push,
 pull-request, scheduled, or automatic teardown runs. Use `main` and supply:
-- `subscription`: only `cybersecurity-prd` (default), `cybersecurity-stg`, or `cybersecurity-tst`.
+- `subscription`: only `cybersecurity-stg`, `cybersecurity-tst`, or **`cybersecurity-prd` (default)**.
 - `resource_group_name`: boundary for **all managed resources in the selected state**.
-- `vault_name`: existing Key Vault name; the workflow derives `keyvault/<subscription>/<vault>.tfstate`.
+- `state_key`: exact existing blob key, e.g. `applications/dev/compute.tfstate`.
 - `dry_run`: defaults **true**; reports drift and proposed destruction without applying.
-- `confirmation`: for actual destruction, type the exact vault name and disable dry run.
+- `confirmation`: for actual destruction, type the exact state key and disable dry run.
 
 Storage account is fixed to **`kvstate12790`**; container defaults to `tfstate`.
 The [isolated teardown root](Terraform/Azure/deployments/teardown/providers.tf) has
@@ -82,8 +139,8 @@ group deletion when resources remain. Service-level cascading deletion can still
 affect children, so review parent-resource deletions and external consumers carefully.
 
 ### One-time administrator setup
-For each subscription, create separate `terraform-cyber-<dev|tst|prd>-teardown-plan`
-and `terraform-cyber-<dev|tst|prd>-teardown` GitHub environments. Protect the latter
+For each subscription, create separate `azure-cybersecurity-<stg|tst|prd>-teardown-plan`
+and `azure-cybersecurity-<stg|tst|prd>-teardown` GitHub environments. Protect the latter
 with **hvaandres as sole required reviewer**, exactly one `main` branch rule, no
 administrator bypass, and self-review allowed if operating solo. Teardown has no
 approval-bypass input; even dry runs verify that protection exists.
@@ -101,7 +158,7 @@ Optionally set repository `TEARDOWN_RUNNER_LABELS` to a trusted runner-label JSO
 array (default `["ubuntu-latest"]`). Runners need Azure CLI and access to state,
 Azure APIs, and any private data planes. Federate each app only to its own actual
 job environment; legacy execution subject example:
-`repo:hvaandres/DevOps_Intro:environment:terraform-cybersecurity-stg-teardown`.
+`repo:hvaandres/DevOps_Intro:environment:azure-cybersecurity-stg-teardown`.
 Verify the repository's real OIDC subject format first; use no client secrets or storage keys.
 
 Both identities need scoped state-container **Storage Blob Data Contributor**,
@@ -128,6 +185,9 @@ key/secret URIs; it is not an arbitrary-provider runner. Add other provider
 configurations/ownership adapters through review. The backend account and its
 containing group are always protected. Purge and common implicit-delete options
 are disabled; some retained disks or soft-deleted objects may need separate lifecycle handling.
+Configuration-only `prevent_destroy`, provisioners, and workload-specific provider
+options are not loaded by this isolated root; the state allowlist, locks, scoped
+identity, and mandatory review are the authorization boundary.
 
 Plans are sensitive and retained for **one day** on real runs; dry runs upload no
 plan artifact. Start a fresh run after failure, expiry, drift, or changes to `main`;

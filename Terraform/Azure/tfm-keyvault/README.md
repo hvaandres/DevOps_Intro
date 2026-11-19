@@ -79,25 +79,38 @@ The pipeline validates inputs, verifies the subscription UUID **and actual Azure
 Start with a dry run and review the summary/logs. To deploy, submit the same resource inputs in a **new run**, disable dry run, and enable approval checks. Only that run's saved plan is applied; no-change plans skip apply. A completed dry run cannot later be approved into an apply.
 
 **Approval caveats in the current code:**
-- Cyber plan and apply both use `keyvault-cyber-<dev|tst|prd>-plan`. Protection can therefore gate planning itself; the helper's same-environment review check does **not guarantee a distinct post-plan approval**. Separate apply gating requires changing [environment routing](../../../.github/scripts/terraform-pipeline.py), variables, and OIDC trust, not just creating an `*-apply` environment.
+- Cyber plan and apply both use `azure-<subscription>-plan`, where `<subscription>` is `cybersecurity-stg`, `cybersecurity-tst`, or `cybersecurity-prd`. Protection can therefore gate planning itself; the helper's same-environment review check does **not guarantee a distinct post-plan approval**. Separate apply gating requires changing [environment routing](../../../.github/scripts/terraform-pipeline.py), variables, and OIDC trust, not just creating an `*-apply` environment.
 - Manual Key Vault runs default approval checks off; post-merge Key Vault runs also pass `false`. GitHub's own environment rules still apply independently. Do not assume every Key Vault apply has a helper-enforced named approval.
 - With checks enabled, the helper requires only **hvaandres**, a `main`-only branch policy, and an actual approval. Disable **Prevent self-review** for solo maintenance and administrator bypass where supported. Start a new run rather than reusing an earlier attempt's approval.
 
 ### GitHub variables and OIDC
-Create `keyvault-cybersecurity-stg-plan`, `keyvault-cybersecurity-tst-plan`, and/or `keyvault-cybersecurity-prd-plan` under **Settings → Environments**. Configure these **unprefixed, non-secret variables** in each selected environment:
+Create `azure-cybersecurity-stg-plan`, `azure-cybersecurity-tst-plan`, and/or `azure-cybersecurity-prd-plan` under **Settings → Environments**. Configure these **unprefixed, non-secret variables** in each selected environment:
 - `SUBSCRIPTION_ID`, `TENANT_ID`: actual Azure subscription and tenant UUIDs.
 - `PLAN_CLIENT_ID`, `APPLY_CLIENT_ID`: federated application/client UUIDs, not principal object IDs.
 - `BACKEND_ACCOUNT`, `BACKEND_CONTAINER`: pre-existing storage account/container names, not URLs or access keys.
 - `DEPLOY_ENABLED=true`: required even for Cyber dry runs.
 - `RUNNER_LABELS`: optional JSON array; current default is `["ubuntu-latest"]`. Use trusted self-hosted runners when private endpoints require them. Cyber preflight needs Azure CLI.
 
-Both identities need OIDC federation for the **actual job environment**. Legacy subject example: `repo:hvaandres/DevOps_Intro:environment:keyvault-cybersecurity-prd-plan`; issuer `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`. Verify the repository's actual subject format before configuring trust. The workflows use `ARM_USE_OIDC=true`, `ARM_USE_AZUREAD=true`, and `ARM_USE_CLI=false`; do not configure client secrets, access keys, or SAS tokens.
+Both identities need OIDC federation for the **actual job environment**. Legacy subject example: `repo:hvaandres/DevOps_Intro:environment:azure-cybersecurity-prd-plan`; issuer `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`. Verify the repository's actual subject format before configuring trust. The workflows use `ARM_USE_OIDC=true`, `ARM_USE_AZUREAD=true`, and `ARM_USE_CLI=false`; do not configure client secrets, access keys, or SAS tokens.
 
-For **post-merge Key Vault**, the outer workflow checks repository `DEPLOY_ENABLED=true`; jobs use `keyvault-plan` and `keyvault-apply`. Configure the same unprefixed variables for their respective jobs, plus non-secret `TFVARS_JSON` for planning. `KEYVAULT_*` variables are not read by the current workflow. Cyber dispatch uses form inputs instead of `TFVARS_JSON`.
+For **post-merge Key Vault**, the outer workflow checks repository `DEPLOY_ENABLED=true`; jobs use shared `azure-plan` and `azure-apply`. Configure the same unprefixed identity/backend variables for their respective jobs, plus non-secret `KEYVAULT_TFVARS_JSON` for planning. Private Link uses `PRIVATELINK_TFVARS_JSON` so configurations cannot overwrite each other in the shared environment. Cyber dispatch uses form inputs instead of either variable.
 
-Related Private Link workflows share the deployment helper but still use `PRIVATELINK_DEPLOY_ENABLED` as their outer enable flag; their job variables are also unprefixed. They select `privatelink-plan` / `privatelink-apply`, and retain approval checks by default. The resource-request workflow uses `resource-request-approval` and opens a PR; it does not deploy Azure resources.
+Related Private Link workflows share the deployment helper but still use `PRIVATELINK_DEPLOY_ENABLED` as their outer enable flag; their job variables are also unprefixed. They select `azure-plan` / `azure-apply`, and retain approval checks by default. The resource-request workflow uses `resource-request-approval` and opens a PR; it does not deploy Azure resources.
 
 Workflow sources: [Key Vault caller](../../../.github/workflows/ci-keyvault.yml), [checks](../../../.github/workflows/terraform-checks.yml), [shared deployment](../../../.github/workflows/terraform-deploy.yml), and [approval helper](../../../.github/scripts/approval-gate.cjs).
+
+### Migrate the GitHub environment
+Replace `key-vault-cyber-prd-plan` with **`azure-cybersecurity-prd-plan`**. Create the
+replacement under **Settings → Environments**, copy/review its variables and
+protection rules, and update both creation identities' Entra OIDC trust to the
+new job-environment subject before enabling deployment. Code changes alone do
+not migrate the live environment. Keep backend/blob keys unchanged and verify a
+new manual dry run on `main` before retiring old environments or trust.
+
+Shared deployments use `azure-plan` / `azure-apply`; generic teardown uses
+`azure-<subscription>-teardown-plan` / `azure-<subscription>-teardown`. Follow the
+[full migration steps](../../../README.md#migrate-existing-environments) for
+variable separation, protection, OIDC, and verification.
 
 ## Permissions, state, and networking
 - **Plan identity:** workload Reader plus any read/data-plane permissions needed to refresh the resources it manages. **Apply identity:** workload Contributor; RBAC creation additionally needs scoped **Role Based Access Control Administrator** or an approved equivalent. Contributor alone cannot assign roles.

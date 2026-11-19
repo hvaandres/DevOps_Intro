@@ -28,9 +28,9 @@ STATE_KEYS = {
 }
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 CYBER_ENVIRONMENTS = {
-    "cybersecurity-stg": "keyvault-cybersecurity-stg",
-    "cybersecurity-tst": "keyvault-cybersecurity-tst",
-    "cybersecurity-prd": "keyvault-cybersecurity-prd",
+    "cybersecurity-stg": "azure-cybersecurity-stg",
+    "cybersecurity-tst": "azure-cybersecurity-tst",
+    "cybersecurity-prd": "azure-cybersecurity-prd",
 }
 
 
@@ -164,8 +164,8 @@ def configure():
         plan_environment = f"{base_environment}-plan"
         apply_environment = plan_environment
     else:
-        plan_environment = "keyvault-plan" if stack == "KEYVAULT" else "privatelink-plan"
-        apply_environment = "keyvault-apply" if stack == "KEYVAULT" else "privatelink-apply"
+        plan_environment = "azure-plan"
+        apply_environment = "azure-apply"
     with Path(require("GITHUB_OUTPUT")).open("a") as stream:
         stream.write(
             f"plan_environment={plan_environment}\n"

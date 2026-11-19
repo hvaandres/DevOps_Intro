@@ -74,7 +74,7 @@ class CyberRequestTests(unittest.TestCase):
                 self.update_request(require_approval=required)
                 pipeline.configure()
                 self.assertIn(
-                    "plan_environment=keyvault-cybersecurity-prd-plan\n",
+                    "plan_environment=azure-cybersecurity-prd-plan\n",
                     Path(os.environ["GITHUB_OUTPUT"]).read_text(),
                 )
                 self.assertNotIn("require_approval", pipeline.request_values())

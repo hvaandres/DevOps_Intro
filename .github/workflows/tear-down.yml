@@ -13,8 +13,8 @@ on:
         description: "Deletion boundary: every managed resource must belong to this group"
         required: true
         type: string
-      vault_name:
-        description: Existing Key Vault name; the workflow derives its Terraform state key
+      state_key:
+        description: Exact existing .tfstate blob key in kvstate12790 (including folders)
         required: true
         type: string
       dry_run:
@@ -23,7 +23,7 @@ on:
         type: boolean
         default: true
       confirmation:
-        description: For actual teardown, type the vault name exactly
+        description: For actual teardown, type the state key exactly
         required: false
         type: string
         default: ""

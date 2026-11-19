@@ -15,7 +15,7 @@ function fixture() {
   const policies = [{name: "main", type: "branch"}];
   const reviews = [{
     state: "approved", user: {login: "hvaandres"},
-    environments: [{name: "keyvault-apply"}],
+    environments: [{name: "azure-apply"}],
   }];
   const context = {
     ref: "refs/heads/main", actor: "requester", runId: 123, runAttempt: 1,
@@ -38,14 +38,20 @@ function fixture() {
 
 test("only hvaandres can approve a protected deployment", async () => {
   const state = fixture();
-  await verifyProtection(state, "keyvault-apply");
-  await verifyApproval(state, "keyvault-apply");
+  await verifyProtection(state, "azure-apply");
+  await verifyApproval(state, "azure-apply");
+});
+
+test("old service-specific environment approvals do not authorize renamed jobs", async () => {
+  for (const name of ["keyvault-apply", "privatelink-apply", "keyvault-cybersecurity-prd-plan", "terraform-cybersecurity-prd-teardown"]) {
+    await assert.rejects(verifyProtection(fixture(), name), /Unknown approval environment/);
+  }
 });
 
 for (const subscription of ["stg", "tst", "prd"]) {
   test(`teardown ${subscription} requires its own explicit approval`, async () => {
     const state = fixture();
-    const name = `terraform-cybersecurity-${subscription}-teardown`;
+    const name = `azure-cybersecurity-${subscription}-teardown`;
     process.env.REQUIRE_APPROVAL = "true";
     try {
       await verifyTeardownProtection(state, name);
@@ -66,8 +72,8 @@ test("teardown has no approval bypass, even when legacy checks are disabled", as
     if (value === undefined) delete process.env.REQUIRE_APPROVAL;
     else process.env.REQUIRE_APPROVAL = value;
     try {
-      await assert.rejects(verifyTeardownProtection(state, "terraform-cybersecurity-stg-teardown"), /cannot be bypassed/);
-      await assert.rejects(verifyTeardownApproval(state, "terraform-cybersecurity-stg-teardown"), /cannot be bypassed/);
+      await assert.rejects(verifyTeardownProtection(state, "azure-cybersecurity-stg-teardown"), /cannot be bypassed/);
+      await assert.rejects(verifyTeardownApproval(state, "azure-cybersecurity-stg-teardown"), /cannot be bypassed/);
     } finally {
       delete process.env.REQUIRE_APPROVAL;
     }
@@ -77,7 +83,7 @@ test("teardown has no approval bypass, even when legacy checks are disabled", as
 test("teardown cannot reuse the planning or ordinary deployment environment", async () => {
   process.env.REQUIRE_APPROVAL = "true";
   try {
-    for (const name of ["terraform-cybersecurity-stg-teardown-plan", "keyvault-apply", "keyvault-cybersecurity-stg-plan"]) {
+    for (const name of ["azure-cybersecurity-stg-teardown-plan", "azure-apply", "azure-cybersecurity-stg-plan"]) {
       await assert.rejects(verifyTeardownApproval(fixture(), name), /another environment/);
     }
   } finally {
@@ -88,33 +94,33 @@ test("teardown cannot reuse the planning or ordinary deployment environment", as
 test("hvaandres can explicitly approve their own request", async () => {
   const state = fixture();
   state.context.actor = "hvaandres";
-  await verifyProtection(state, "keyvault-apply");
-  await verifyApproval(state, "keyvault-apply");
+  await verifyProtection(state, "azure-apply");
+  await verifyApproval(state, "azure-apply");
 });
 
 test("solo requests still require an actual hvaandres approval", async () => {
   const state = fixture();
   state.context.actor = "hvaandres";
   state.reviews.length = 0;
-  await assert.rejects(verifyApproval(state, "keyvault-apply"), /explicit approval/);
+  await assert.rejects(verifyApproval(state, "azure-apply"), /explicit approval/);
 });
 
 test("solo requests cannot use another person's approval", async () => {
   const state = fixture();
   state.context.actor = "hvaandres";
   state.reviews[0].user.login = "someone-else";
-  await assert.rejects(verifyApproval(state, "keyvault-apply"), /explicit approval/);
+  await assert.rejects(verifyApproval(state, "azure-apply"), /explicit approval/);
 });
 
 test("independent review also works if an environment still prevents self-review", async () => {
   const state = fixture();
   state.environment.protection_rules[0].prevent_self_review = true;
-  await verifyApproval(state, "keyvault-apply");
+  await verifyApproval(state, "azure-apply");
 });
 
 for (const name of [
-  "privatelink-apply", "resource-request-approval",
-  "keyvault-cybersecurity-stg-plan", "keyvault-cybersecurity-tst-plan", "keyvault-cybersecurity-prd-plan",
+  "azure-apply", "resource-request-approval",
+  "azure-cybersecurity-stg-plan", "azure-cybersecurity-tst-plan", "azure-cybersecurity-prd-plan",
 ]) {
   test(`${name} uses the same named approval policy`, async () => {
     const state = fixture();
@@ -137,7 +143,7 @@ for (const [name, mutate] of [
   test(`rejects ${name}`, async () => {
     const state = fixture();
     mutate(state);
-    await assert.rejects(verifyProtection(state, "keyvault-apply"));
+    await assert.rejects(verifyProtection(state, "azure-apply"));
   });
 }
 
@@ -145,13 +151,13 @@ for (const [name, mutate] of [
   ["no actual approval", s => { s.reviews.length = 0; }],
   ["approval by someone else", s => { s.reviews[0].user.login = "someone-else"; }],
   ["rejected request", s => { s.reviews[0].state = "rejected"; }],
-  ["approval for another environment", s => { s.reviews[0].environments[0].name = "privatelink-apply"; }],
+  ["approval for another environment", s => { s.reviews[0].environments[0].name = "azure-cybersecurity-tst-plan"; }],
   ["previous-attempt approval", s => { s.context.runAttempt = 2; }],
 ]) {
   test(`rejects ${name}`, async () => {
     const state = fixture();
     mutate(state);
-    await assert.rejects(verifyApproval(state, "keyvault-apply"));
+    await assert.rejects(verifyApproval(state, "azure-apply"));
   });
 }
 
@@ -159,21 +165,21 @@ test("checks the latest review for the specific environment", async () => {
   const state = fixture();
   state.reviews.unshift({
     state: "rejected", user: {login: "hvaandres"},
-    environments: [{name: "privatelink-apply"}],
+    environments: [{name: "azure-cybersecurity-tst-plan"}],
   });
-  await verifyApproval(state, "keyvault-apply");
+  await verifyApproval(state, "azure-apply");
   state.reviews.unshift({
     state: "rejected", user: {login: "hvaandres"},
-    environments: [{name: "keyvault-apply"}],
+    environments: [{name: "azure-apply"}],
   });
-  await assert.rejects(verifyApproval(state, "keyvault-apply"));
+  await assert.rejects(verifyApproval(state, "azure-apply"));
 });
 
 test("unknown environments and inaccessible settings fail closed", async () => {
   const state = fixture();
   await assert.rejects(verifyProtection(state, "unprotected-environment"));
   state.github.rest.repos.getEnvironment = async () => { throw new Error("Not found"); };
-  await assert.rejects(verifyProtection(state, "keyvault-apply"));
+  await assert.rejects(verifyProtection(state, "azure-apply"));
 });
 
 test("missing environment returns setup instructions", async () => {
@@ -181,8 +187,8 @@ test("missing environment returns setup instructions", async () => {
   const error = Object.assign(new Error("Not Found"), {status: 404});
   state.github.rest.repos.getEnvironment = async () => { throw error; };
   await assert.rejects(
-    verifyProtection(state, "keyvault-cybersecurity-prd-plan"),
-    /Environment 'keyvault-cybersecurity-prd-plan' does not exist/,
+    verifyProtection(state, "azure-cybersecurity-prd-plan"),
+    /Environment 'azure-cybersecurity-prd-plan' does not exist/,
   );
 });
 

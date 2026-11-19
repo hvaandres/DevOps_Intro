@@ -273,24 +273,39 @@ All repository-changing resource requests and Azure deployments have multiple
 stages and must be approved by **hvaandres**. Read-only CI checks remain automatic.
 Create these GitHub repository environments **before enabling the workflows**:
 
+- `keyvault-cyber-dev-plan`, `keyvault-cyber-tst-plan`,
+  `keyvault-cyber-prd-plan`: current Cyber plan/apply environments. The current
+  configuration routes both jobs to the same per-subscription environment.
 - `keyvault-cyber-dev-apply`, `keyvault-cyber-tst-apply`,
-  `keyvault-cyber-prd-apply`: Cyber vault deployment approvals.
+  `keyvault-cyber-prd-apply`: also supported if separate apply environments are configured.
 - `keyvault-apply`: legacy post-merge single-vault deployment approval.
 - `privatelink-apply`: network deployment approval.
 - `resource-request-approval`: approval before the Private Link request workflow
   creates a branch/PR; merging that PR is not an Azure deployment approval.
 
 For **each** environment, configure required reviewers as **only the user
-`hvaandres`** (not a team or a list of alternates), enable **Prevent self-review**,
+`hvaandres`** (not a team or a list of alternates), disable **Prevent self-review**,
 restrict deployment to exactly one branch rule `main` (no tags), and disable
 administrator bypass where supported. Merely naming an environment in YAML does
 not configure these rules. The workflows check the protection settings and the
 actual approving user's identity through GitHub's API; missing/wrong settings,
 another approver, rejection, or absent approval fail closed.
 
-Because self-review is disabled, **a request initiated by hvaandres cannot also be
-approved by hvaandres**. Another operator must initiate the mutating run. This
-also applies to push-triggered deployment runs initiated by hvaandres.
+**Solo-maintainer mode:** hvaandres may initiate a request and explicitly approve
+that same run. Approval is not automatic: the gate still checks for an actual
+approved review by hvaandres for the selected environment. Missing reviews,
+rejections, or approvals by other users are rejected when approval is enabled.
+
+To enable this in GitHub, open **Repository → Settings → Environments**, select
+the environment used by the run (for example `keyvault-cyber-prd-plan`), keep only
+`hvaandres` under **Required reviewers**, uncheck **Prevent self-review**, and
+save the protection rules. Repeat for any other environments you use. Keep the
+`main`-only branch policy and other protections unchanged. The local script cannot
+change GitHub settings without authenticated repository administration access.
+
+Use `require_approval=true` to retain explicit approval while working alone;
+`false` is the existing temporary script-check bypass, not self-approval mode.
+The bypass does not remove GitHub's configured required-reviewer gate.
 Read-only dry runs can still be initiated by hvaandres. Start a **new workflow
 run** after failures, expiration, or changes; do not reuse the Re-run jobs button.
 Review history does not identify attempts, so mutating jobs reject later run
@@ -349,12 +364,12 @@ The new Key Vault deployment root uses an **existing resource group**, private/d
 
 ### 3. Configure protected deployment environments
 Create `keyvault-apply` and `privatelink-apply` in the repository settings before enabling deployment:
-1. Set the sole required reviewer to **hvaandres**, with **Prevent self-review** enabled.
+1. Set the sole required reviewer to **hvaandres**, with **Prevent self-review** disabled to allow solo-maintainer approval.
 2. Select **Selected branches and tags**, with exactly one **branch** rule named `main` and no tag rules.
 3. Disable administrator bypass where supported.
 4. Protect `main` and require CI/review for changes to Terraform and `.github/`.
 
-The plan job checks the sole hvaandres reviewer/self-review and branch rules via the GitHub API and fails if they are absent. Apply checks the actual approving user's identity again before Azure access. Administrator bypass must be disabled manually; the read API does not reliably expose that setting. YAML environment names alone do not enforce review. Reviewers are only available for public repositories on GitHub Free/Pro/Team; a private repository needs a plan supporting that protection. If unavailable, leave deployment disabled rather than removing the gate.
+When approval is enabled, the plan job checks the sole hvaandres reviewer and branch rules via the GitHub API and fails if they are absent. The script permits self-approval, but GitHub must also have Prevent self-review disabled for the requester to approve. Apply checks the actual approving user's identity again before Azure access. Administrator bypass must be disabled manually; the read API does not reliably expose that setting. YAML environment names alone do not enforce review. Reviewers are only available for public repositories on GitHub Free/Pro/Team; a private repository needs a plan supporting that protection. If unavailable, leave deployment disabled rather than removing the gate.
 
 ### 4. Set repository Actions variables
 For each prefix `KEYVAULT` and `PRIVATELINK`, configure these **repository-level non-secret variables** (do not override shared settings at environment scope):

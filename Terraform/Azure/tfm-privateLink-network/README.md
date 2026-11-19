@@ -158,7 +158,7 @@ The workflow will:
 - Run backend-disabled initialization and Terraform validation without Azure credentials
 - Pause for **hvaandres** approval in the protected `resource-request-approval`
   environment; its sole required reviewer must be the user `hvaandres`, with
-  self-review disabled and a `main`-only branch rule
+  **Prevent self-review** disabled to allow solo maintenance, and a `main`-only branch rule
 - Rebuild/revalidate the same request and open a **Pull Request** after approval
 - Leave cloud planning and deployment to the post-merge approval-gated pipeline
 
@@ -264,8 +264,9 @@ Manual runs default to **dry_run=true**: plan against Blob state, but never ente
 Read-only CI steps run automatically. Mutating paths verify the sole required
 reviewer is `hvaandres` and verify the actual approval history before proceeding.
 See the [shared approval configuration](../tfm-keyvault/README.md#required-approval-gateway-for-all-mutating-workflows).
-With self-review disabled, another operator must initiate a request that hvaandres
-will approve. A bot-created PR is a request artifact, not permission to deploy.
+With **Prevent self-review** disabled in GitHub, hvaandres can initiate and
+explicitly approve their own request. A bot-created PR is a request artifact,
+not permission to deploy.
 
 ---
 

@@ -22,17 +22,18 @@ async function verifyProtection({github, context}, environmentName) {
     if (error.status === 404 || error.response?.status === 404) {
       throw new Error(
         `GitHub Environment '${environmentName}' does not exist. Create it in Settings > Environments, ` +
-        "require only hvaandres with self-review disabled, and allow exactly one main-branch deployment policy.",
+        "require only hvaandres, disable 'Prevent self-review' for solo maintenance, " +
+        "and allow exactly one main-branch deployment policy.",
       );
     }
     throw error;
   }
   const reviews = environment.protection_rules.filter(rule => rule.type === "required_reviewers");
   const review = reviews[0];
-  if (reviews.length !== 1 || !review.prevent_self_review ||
+  if (reviews.length !== 1 ||
       review.reviewers?.length !== 1 || review.reviewers[0].type !== "User" ||
       review.reviewers[0].reviewer?.login?.toLowerCase() !== APPROVER) {
-    throw new Error(`${environmentName} must require only ${APPROVER}, with self-review disabled.`);
+    throw new Error(`${environmentName} must require only ${APPROVER} as the sole user reviewer.`);
   }
   if (!environment.deployment_branch_policy?.custom_branch_policies) {
     throw new Error(`${environmentName} must allow only main.`);
@@ -58,9 +59,8 @@ async function verifyApproval({github, context}, environmentName) {
     {...context.repo, run_id: context.runId},
   );
   const latest = reviews.find(review => review.environments.some(env => env.name === environmentName));
-  if (latest?.state !== "approved" || latest.user?.login?.toLowerCase() !== APPROVER ||
-      context.actor?.toLowerCase() === APPROVER) {
-    throw new Error(`This environment requires an explicit, non-self approval by ${APPROVER}.`);
+  if (latest?.state !== "approved" || latest.user?.login?.toLowerCase() !== APPROVER) {
+    throw new Error(`This environment requires an explicit approval by ${APPROVER}. Self-approval is allowed.`);
   }
 }
 

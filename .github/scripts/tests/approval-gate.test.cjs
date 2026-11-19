@@ -7,7 +7,7 @@ const {verifyProtection, verifyApproval} = require("../approval-gate.cjs");
 function fixture() {
   const environment = {
     protection_rules: [{
-      type: "required_reviewers", prevent_self_review: true,
+      type: "required_reviewers", prevent_self_review: false,
       reviewers: [{type: "User", reviewer: {login: "hvaandres"}}],
     }],
     deployment_branch_policy: {custom_branch_policies: true},
@@ -42,6 +42,33 @@ test("only hvaandres can approve a protected deployment", async () => {
   await verifyApproval(state, "keyvault-apply");
 });
 
+test("hvaandres can explicitly approve their own request", async () => {
+  const state = fixture();
+  state.context.actor = "hvaandres";
+  await verifyProtection(state, "keyvault-apply");
+  await verifyApproval(state, "keyvault-apply");
+});
+
+test("solo requests still require an actual hvaandres approval", async () => {
+  const state = fixture();
+  state.context.actor = "hvaandres";
+  state.reviews.length = 0;
+  await assert.rejects(verifyApproval(state, "keyvault-apply"), /explicit approval/);
+});
+
+test("solo requests cannot use another person's approval", async () => {
+  const state = fixture();
+  state.context.actor = "hvaandres";
+  state.reviews[0].user.login = "someone-else";
+  await assert.rejects(verifyApproval(state, "keyvault-apply"), /explicit approval/);
+});
+
+test("independent review also works if an environment still prevents self-review", async () => {
+  const state = fixture();
+  state.environment.protection_rules[0].prevent_self_review = true;
+  await verifyApproval(state, "keyvault-apply");
+});
+
 for (const name of [
   "privatelink-apply", "resource-request-approval",
   "keyvault-cyber-dev-apply", "keyvault-cyber-tst-apply", "keyvault-cyber-prd-apply",
@@ -49,6 +76,7 @@ for (const name of [
 ]) {
   test(`${name} uses the same named approval policy`, async () => {
     const state = fixture();
+    state.context.actor = "hvaandres";
     state.reviews[0].environments[0].name = name;
     await verifyApproval(state, name);
   });
@@ -59,7 +87,6 @@ for (const [name, mutate] of [
   ["team reviewer", s => { s.environment.protection_rules[0].reviewers[0].type = "Team"; }],
   ["additional reviewer", s => { s.environment.protection_rules[0].reviewers.push({type: "User", reviewer: {login: "alternate"}}); }],
   ["missing reviewer rule", s => { s.environment.protection_rules = []; }],
-  ["self-review permitted", s => { s.environment.protection_rules[0].prevent_self_review = false; }],
   ["unrestricted deployment branches", s => { s.environment.deployment_branch_policy.custom_branch_policies = false; }],
   ["extra deployment branch", s => { s.policies.push({name: "feature", type: "branch"}); }],
   ["main tag instead of branch", s => { s.policies[0].type = "tag"; }],
@@ -77,7 +104,6 @@ for (const [name, mutate] of [
   ["approval by someone else", s => { s.reviews[0].user.login = "someone-else"; }],
   ["rejected request", s => { s.reviews[0].state = "rejected"; }],
   ["approval for another environment", s => { s.reviews[0].environments[0].name = "privatelink-apply"; }],
-  ["self-approved request", s => { s.context.actor = "hvaandres"; }],
   ["previous-attempt approval", s => { s.context.runAttempt = 2; }],
 ]) {
   test(`rejects ${name}`, async () => {

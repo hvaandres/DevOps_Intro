@@ -391,8 +391,11 @@ standalone `terraform check` command. Azure CLI is used only for read-only
 subscription/group preflight, never to create the vault.
 
 An administrator must first configure the Cyber UUID/identity/backend variables,
-OIDC trust, trusted runner, and protected approval environments. A run initiated
-by hvaandres cannot self-approve; another operator must initiate a mutating run.
+OIDC trust, trusted runner, and protected approval environments. For solo
+maintenance, keep hvaandres as the sole required reviewer and disable **Prevent
+self-review** in GitHub's environment settings. hvaandres can then initiate and
+explicitly approve the same run with `require_approval=true`; the script does not
+automatically approve it.
 See the [full form, dry-run, and approval setup guide](Azure/tfm-keyvault/README.md#request-a-cyber-key-vault-from-the-actions-form).
 
 ## Troubleshooting and cleanup

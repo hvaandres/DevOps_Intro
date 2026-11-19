@@ -11,7 +11,18 @@ async function verifyProtection({github, context}, environmentName) {
     throw new Error("Unknown approval environment or non-main request.");
   }
   const args = {...context.repo, environment_name: environmentName};
-  const {data: environment} = await github.rest.repos.getEnvironment(args);
+  let environment;
+  try {
+    ({data: environment} = await github.rest.repos.getEnvironment(args));
+  } catch (error) {
+    if (error.status === 404 || error.response?.status === 404) {
+      throw new Error(
+        `GitHub Environment '${environmentName}' does not exist. Create it in Settings > Environments, ` +
+        "require only hvaandres with self-review disabled, and allow exactly one main-branch deployment policy.",
+      );
+    }
+    throw error;
+  }
   const reviews = environment.protection_rules.filter(rule => rule.type === "required_reviewers");
   const review = reviews[0];
   if (reviews.length !== 1 || !review.prevent_self_review ||

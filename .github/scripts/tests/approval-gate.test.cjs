@@ -106,3 +106,13 @@ test("unknown environments and inaccessible settings fail closed", async () => {
   state.github.rest.repos.getEnvironment = async () => { throw new Error("Not found"); };
   await assert.rejects(verifyProtection(state, "keyvault-apply"));
 });
+
+test("missing environment returns setup instructions", async () => {
+  const state = fixture();
+  const error = Object.assign(new Error("Not Found"), {status: 404});
+  state.github.rest.repos.getEnvironment = async () => { throw error; };
+  await assert.rejects(
+    verifyProtection(state, "keyvault-cyber-prd-apply"),
+    /Environment 'keyvault-cyber-prd-apply' does not exist/,
+  );
+});

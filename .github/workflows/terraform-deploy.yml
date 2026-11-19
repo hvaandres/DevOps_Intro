@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: terraform-deployment-${{ inputs.stack }}
+  group: terraform-deployment-AZURE
   cancel-in-progress: false
 
 env:

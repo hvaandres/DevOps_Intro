@@ -99,6 +99,42 @@ run "private_endpoint_configuration" {
   }
 }
 
+
+run "default_deletion_lock" {
+  command = apply
+
+  assert {
+    condition     = length(azurerm_management_lock.vault) == 1 && azurerm_management_lock.vault[0].lock_level == "CanNotDelete" && azurerm_management_lock.vault[0].scope == output.id
+    error_message = "Protect the vault from control-plane deletion by default."
+  }
+}
+
+run "standalone_lock_opt_out" {
+  command = plan
+  variables {
+    deletion_protection_enabled = false
+  }
+  assert {
+    condition     = length(azurerm_management_lock.vault) == 0 && length(azurerm_management_lock.private_endpoint) == 0
+    error_message = "Reusable-module callers may opt out; the Actions wrapper does not expose this switch."
+  }
+}
+run "private_endpoint_deletion_lock" {
+  command = apply
+  variables {
+    private_endpoints = {
+      application = {
+        name      = "pe-keyvault"
+        subnet_id = "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/vnet-test/subnets/endpoints"
+      }
+    }
+  }
+  assert {
+    condition     = azurerm_management_lock.private_endpoint["application"].scope == azurerm_private_endpoint.this["application"].id && azurerm_management_lock.private_endpoint["application"].lock_level == "CanNotDelete"
+    error_message = "Protect each managed endpoint at its own scope."
+  }
+}
+
 run "compose_keys_and_secrets" {
   command = apply
   variables {

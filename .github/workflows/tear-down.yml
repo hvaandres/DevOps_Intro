@@ -1,0 +1,233 @@
+name: tear down
+
+on:
+  workflow_dispatch:
+    inputs:
+      subscription:
+        description: Azure subscription containing the state-tracked resources
+        required: true
+        type: choice
+        options: [cyber-dev, cyber-tst, cyber-prd]
+        default: cyber-dev
+      resource_group_name:
+        description: "Deletion boundary: every managed resource must belong to this group"
+        required: true
+        type: string
+      state_key:
+        description: Exact existing .tfstate blob key in kvstate12790 (including folders)
+        required: true
+        type: string
+      dry_run:
+        description: Plan destruction only; do not remove locks or delete resources
+        required: true
+        type: boolean
+        default: true
+      confirmation:
+        description: For an actual teardown, type the state key exactly
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# The same group as creation/update prevents concurrent Azure deployment and teardown operations.
+concurrency:
+  group: terraform-deployment-AZURE
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.16.0"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  ARM_USE_OIDC: "true"
+  ARM_USE_AZUREAD: "true"
+  ARM_USE_CLI: "false"
+  REQUIRE_APPROVAL: "true"
+  TEARDOWN_REQUEST_JSON: ${{ toJSON(inputs) }}
+  TF_ROOT: Terraform/Azure/deployments/teardown
+
+jobs:
+  configuration:
+    if: github.ref == 'refs/heads/main' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      plan_environment: ${{ steps.configuration.outputs.plan_environment }}
+      destroy_environment: ${{ steps.configuration.outputs.destroy_environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate target and choose separate teardown environments
+        id: configuration
+        run: python3 .github/scripts/terraform-teardown.py configure
+
+  plan:
+    needs: configuration
+    environment:
+      name: ${{ needs.configuration.outputs.plan_environment }}
+    runs-on: ${{ fromJSON(vars.TEARDOWN_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    outputs:
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    env:
+      TEARDOWN_PHASE: plan
+      TEARDOWN_ENABLED: ${{ vars.TEARDOWN_ENABLED }}
+      TEARDOWN_ALLOWED_STATE_KEYS: ${{ vars.TEARDOWN_ALLOWED_STATE_KEYS }}
+      BACKEND_RESOURCE_GROUP_NAME: ${{ vars.BACKEND_RESOURCE_GROUP_NAME }}
+      BACKEND_SUBSCRIPTION_ID: ${{ vars.BACKEND_SUBSCRIPTION_ID }}
+      ARM_CLIENT_ID: ${{ vars.PLAN_CLIENT_ID }}
+      PLAN_CLIENT_ID: ${{ vars.PLAN_CLIENT_ID }}
+      TEARDOWN_CLIENT_ID: ${{ vars.TEARDOWN_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}
+      BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER || 'tfstate' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Require protected teardown environment even for dry runs
+        uses: actions/github-script@v7
+        env:
+          DESTROY_ENVIRONMENT: ${{ needs.configuration.outputs.destroy_environment }}
+        with:
+          script: |
+            const gate = require('./.github/scripts/approval-gate.cjs');
+            await gate.verifyTeardownProtection({github, context}, process.env.DESTROY_ENVIRONMENT);
+      - name: Prepare fixed kvstate12790 backend and validate identity separation
+        run: python3 .github/scripts/terraform-teardown.py prepare
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+      - name: Verify subscription, resource group, and existing state blob
+        run: python3 .github/scripts/terraform-teardown.py preflight
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: Terraform init — existing Entra Blob backend
+        run: terraform -chdir="$TF_ROOT" init -input=false -reconfigure -lockfile=readonly -backend-config=.pipeline/backend.hcl
+      - name: Validate exact state ownership without exposing raw state
+        run: python3 .github/scripts/terraform-teardown.py state
+      - name: Check for inherited or unmanaged locks
+        run: python3 .github/scripts/terraform-teardown.py locks
+      - name: Terraform validate
+        run: terraform -chdir="$TF_ROOT" validate -no-color
+      - name: Detect live drift without changing resources or remote state
+        run: python3 .github/scripts/terraform-teardown.py drift
+      - name: Terraform plan -destroy — save and summarize deletions only
+        run: python3 .github/scripts/terraform-teardown.py plan
+      - name: Bind destroy plan to this request, backend, commit, run, and attempt
+        if: ${{ !inputs.dry_run }}
+        run: python3 .github/scripts/terraform-teardown.py seal
+      - name: Upload sensitive saved destroy plan for protected execution
+        if: ${{ !inputs.dry_run }}
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-destroy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.TF_ROOT }}/.pipeline/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  destroy:
+    needs: [configuration, plan]
+    if: ${{ !inputs.dry_run }}
+    environment:
+      name: ${{ needs.configuration.outputs.destroy_environment }}
+    runs-on: ${{ fromJSON(vars.TEARDOWN_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      TEARDOWN_PHASE: destroy
+      TEARDOWN_ENABLED: ${{ vars.TEARDOWN_ENABLED }}
+      TEARDOWN_ALLOWED_STATE_KEYS: ${{ vars.TEARDOWN_ALLOWED_STATE_KEYS }}
+      BACKEND_RESOURCE_GROUP_NAME: ${{ vars.BACKEND_RESOURCE_GROUP_NAME }}
+      BACKEND_SUBSCRIPTION_ID: ${{ vars.BACKEND_SUBSCRIPTION_ID }}
+      ARM_CLIENT_ID: ${{ vars.TEARDOWN_CLIENT_ID }}
+      PLAN_CLIENT_ID: ${{ vars.PLAN_CLIENT_ID }}
+      TEARDOWN_CLIENT_ID: ${{ vars.TEARDOWN_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}
+      BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER || 'tfstate' }}
+      EXPECTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Require hvaandres approval after the destroy plan
+        uses: actions/github-script@v7
+        env:
+          DESTROY_ENVIRONMENT: ${{ needs.configuration.outputs.destroy_environment }}
+        with:
+          script: |
+            const gate = require('./.github/scripts/approval-gate.cjs');
+            await gate.verifyTeardownApproval({github, context}, process.env.DESTROY_ENVIRONMENT);
+            const {data} = await github.rest.git.getRef({...context.repo, ref: 'heads/main'});
+            if (data.object.sha !== context.sha) {
+              throw new Error('main advanced. Start a new run and approve a fresh destroy plan.');
+            }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify saved artifact digest via GitHub
+        id: artifact
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_NAME: azure-destroy-${{ github.run_id }}-${{ github.run_attempt }}
+        with:
+          script: |
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: context.runId
+            });
+            const matches = artifacts.filter(item => item.name === process.env.ARTIFACT_NAME && !item.expired);
+            if (matches.length !== 1 || matches[0].digest !== `sha256:${process.env.EXPECTED_ARTIFACT_DIGEST}`) {
+              throw new Error('Missing or modified same-run destroy artifact.');
+            }
+            core.setOutput('id', String(matches[0].id));
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.id }}
+          path: ${{ env.TF_ROOT }}/.pipeline/
+          merge-multiple: true
+      - name: Verify destruction provenance, inputs, backend, and provider lock
+        run: python3 .github/scripts/terraform-teardown.py verify
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+      - name: Recheck target and state blob after approval
+        run: python3 .github/scripts/terraform-teardown.py preflight
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: Terraform init — approved backend and teardown identity
+        run: terraform -chdir="$TF_ROOT" init -input=false -reconfigure -lockfile=readonly -backend-config=.pipeline/backend.hcl
+      - name: Reject stale state, unexpected deletions, or inherited locks
+        run: python3 .github/scripts/terraform-teardown.py verify-plan
+      - name: Execute the original approved destroy plan only — no purge
+        run: terraform -chdir="$TF_ROOT" apply -input=false -no-color -lock-timeout=5m .pipeline/destroy.tfplan

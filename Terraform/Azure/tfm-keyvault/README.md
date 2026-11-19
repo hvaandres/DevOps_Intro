@@ -2,7 +2,7 @@
 Provision an RBAC-enabled Azure Key Vault with optional private endpoints, keys, secrets, and scoped role assignments.
 
 ## What is configured
-- **Defaults:** Standard SKU, public access disabled, firewall `Deny`, trusted-service bypass `None`, purge protection enabled, and 90-day soft-delete retention.
+- **Defaults:** Standard SKU, public access disabled, firewall `Deny`, trusted-service bypass `None`, deletion locks and purge protection enabled, and 90-day soft-delete retention.
 - **Reusable module:** accepts `name` and `resource_group_name`; looks up the existing group and inherits its location unless overridden. Set `create_resource_group = true` and `location` to create a group.
 - **Actions deployment:** uses [the deployment wrapper](../deployments/keyvault/main.tf), accepts `vault_name`, requires an existing group, and fixes the vault region to **`westus2`**. It does not create keys, secrets, certificates, identities, subnets, or DNS zones.
 - **Versions:** Terraform `>= 1.9, < 2.0`; AzureRM `~> 4.71` (module lock: `4.81.0`). Actions uses Terraform `1.16.0`.
@@ -50,7 +50,7 @@ The caller must declare the two referenced variables and supply existing subnet/
 | --- | --- |
 | Required | `name`, `resource_group_name` |
 | Placement | `create_resource_group=false`, `location=null`, `tenant_id=null` (provider tenant) |
-| Protection | `sku_name="standard"`, `purge_protection_enabled=true`, `soft_delete_retention_days=90` (whole days, 7–90) |
+| Protection | `sku_name="standard"`, `deletion_protection_enabled=true`, `purge_protection_enabled=true`, `soft_delete_retention_days=90` (whole days, 7–90) |
 | Network | `public_network_access_enabled=false`, `network_acls`, `private_endpoints` |
 | Authorization | `role_assignments`, optional `deployment_principal_id` and `deployment_principal_roles` |
 | Objects | `keys`, `secrets` metadata, sensitive `secret_values`; all default empty |
@@ -112,7 +112,12 @@ Provision state storage separately using an existing account or the bootstrap ex
 - Basic / complete examples: `keyvault/basic.tfstate` / `keyvault/complete.tfstate`, container `tfstate`.
 - Related Private Link stack: `privatelink-network.tfstate`.
 
-Repeated Cyber requests for the same subscription/name target the same state: supply the **complete desired** endpoints, roles, and tags. The request path rejects vault deletion/replacement. Existing resources under other state need a reviewed migration/import first. Plan artifacts expire after **one day**; apply verifies same-run provenance, integrity, provider lock, and that `main` has not advanced. Runs serialize per stack, with Blob leases for state locking.
+Repeated Cyber requests for the same subscription/name target the same state: supply the **complete desired** endpoints, roles, and tags. All normal Key Vault deployment plans reject resource deletion/replacement and lock weakening. Existing resources under other state need a reviewed migration/import first. Plan artifacts expire after **one day**; apply verifies same-run provenance, integrity, provider lock, and that `main` has not advanced. Azure deployments and teardown share a concurrency group, with Blob leases for state locking.
+
+## Deletion protection and manual teardown
+`CanNotDelete` locks protect the vault and its managed endpoints after the next reviewed apply. Actions forces protection on; standalone module callers can opt out with `deletion_protection_enabled=false`. Give normal deployment identities scoped `Microsoft.Authorization/locks/read` and `locks/write`, **not** `locks/delete`. Locks do not stop administrators who can remove them or protect key/secret data-plane deletion.
+
+Use the repository-wide **Actions → tear down → Run workflow** for state-driven destruction, not the creation workflow. It supports other Azure resources too, defaults to dry run, uses `kvstate12790`, and validates scope, drift, and explicit approval. See [manual teardown setup and drift controls](../../../README.md#manual-state-driven-tear-down). Cyber vault state keys remain `keyvault/<subscription>/<vault-name>.tfstate`; authorize the exact existing key before use. No locks are automatically added to other workloads by this Key Vault module.
 
 ## Examples and lifecycle safety
 - [Basic](examples/basic/README.md): existing group, explicitly enabled IP-allowlisted public access, application Secrets User role; no keys/secrets created.
@@ -129,7 +134,7 @@ From this module directory, run the same configuration coverage as Key Vault CI 
 ```sh
 terraform fmt -check -recursive
 terraform -chdir=../deployments/keyvault fmt -check -recursive
-for directory in . modules/key modules/secret examples/basic examples/complete examples/bootstrap ../deployments/keyvault; do
+for directory in . modules/key modules/secret examples/basic examples/complete examples/bootstrap ../deployments/keyvault ../deployments/teardown; do
   terraform -chdir="$directory" init -backend=false -input=false -lockfile=readonly || break
   terraform -chdir="$directory" validate -no-color || break
   if [ -d "$directory/tests" ]; then

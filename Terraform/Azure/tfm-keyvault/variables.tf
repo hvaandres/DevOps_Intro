@@ -44,6 +44,13 @@ variable "sku_name" {
   }
 }
 
+variable "deletion_protection_enabled" {
+  description = "Create CanNotDelete locks on the vault and managed private endpoints. Lock removal requires separately privileged authorization."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "purge_protection_enabled" {
   description = "Enable purge protection. Once enabled, Azure does not allow disabling it."
   type        = bool

@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const {verifyProtection, verifyApproval} = require("../approval-gate.cjs");
+const {verifyProtection, verifyApproval, verifyTeardownProtection, verifyTeardownApproval} = require("../approval-gate.cjs");
 
 function fixture() {
   const environment = {
@@ -40,6 +40,49 @@ test("only hvaandres can approve a protected deployment", async () => {
   const state = fixture();
   await verifyProtection(state, "keyvault-apply");
   await verifyApproval(state, "keyvault-apply");
+});
+
+for (const subscription of ["dev", "tst", "prd"]) {
+  test(`teardown ${subscription} requires its own explicit approval`, async () => {
+    const state = fixture();
+    const name = `terraform-cyber-${subscription}-teardown`;
+    process.env.REQUIRE_APPROVAL = "true";
+    try {
+      await verifyTeardownProtection(state, name);
+      await assert.rejects(verifyTeardownApproval(state, name), /explicit approval/);
+      state.reviews[0].environments[0].name = name;
+      await verifyTeardownApproval(state, name);
+      state.context.runAttempt = 2;
+      await assert.rejects(verifyTeardownApproval(state, name), /new workflow run/);
+    } finally {
+      delete process.env.REQUIRE_APPROVAL;
+    }
+  });
+}
+
+test("teardown has no approval bypass, even when legacy checks are disabled", async () => {
+  for (const value of ["false", "", undefined]) {
+    const state = fixture();
+    if (value === undefined) delete process.env.REQUIRE_APPROVAL;
+    else process.env.REQUIRE_APPROVAL = value;
+    try {
+      await assert.rejects(verifyTeardownProtection(state, "terraform-cyber-dev-teardown"), /cannot be bypassed/);
+      await assert.rejects(verifyTeardownApproval(state, "terraform-cyber-dev-teardown"), /cannot be bypassed/);
+    } finally {
+      delete process.env.REQUIRE_APPROVAL;
+    }
+  }
+});
+
+test("teardown cannot reuse the planning or ordinary deployment environment", async () => {
+  process.env.REQUIRE_APPROVAL = "true";
+  try {
+    for (const name of ["terraform-cyber-dev-teardown-plan", "keyvault-apply", "keyvault-cyber-dev-plan"]) {
+      await assert.rejects(verifyTeardownApproval(fixture(), name), /another environment/);
+    }
+  } finally {
+    delete process.env.REQUIRE_APPROVAL;
+  }
 });
 
 test("hvaandres can explicitly approve their own request", async () => {

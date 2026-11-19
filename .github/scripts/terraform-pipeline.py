@@ -343,11 +343,17 @@ def verify():
 def summarize():
     plan = json.load(sys.stdin)
     requested = request_values()
-    if requested is not None and any(
-        item.get("type") == "azurerm_key_vault" and "delete" in item["change"]["actions"]
+    if require("STACK") == "KEYVAULT" and any(
+        item.get("mode", "managed") == "managed" and (
+            "delete" in item["change"]["actions"]
+            or (
+                item.get("type") == "azurerm_management_lock"
+                and item["change"].get("after", {}).get("lock_level") != "CanNotDelete"
+            )
+        )
         for item in plan.get("resource_changes", [])
     ):
-        raise ValueError("Request would delete or replace a vault; perform a separately reviewed migration")
+        raise ValueError("Key Vault deletion/replacement or lock weakening requires the approved tear down workflow")
     changes = [item for item in plan.get("resource_changes", []) if item["change"]["actions"] != ["no-op"]]
     lines = [
         f"## Terraform plan: {html.escape(require('STACK'))}",
@@ -394,7 +400,7 @@ def main():
         hint = {
             "configure": "Check the Cyber subscription choice, vault/group names, and typed JSON request fields.",
             "azure-preflight": "Verify the selected Cyber subscription UUID/display name, existing resource-group membership, Azure access, and connectivity.",
-            "summarize": "The plan could not be reviewed; Cyber requests must not delete or replace a vault.",
+            "summarize": "The plan could not be reviewed; Key Vault deletions/replacements require the approved tear down workflow.",
         }.get(sys.argv[1] if len(sys.argv) > 1 else "", "Check required settings, enable flags, and artifact provenance.")
         detail = str(error) if isinstance(error, SubscriptionMismatchError) else hint
         print(f"::error::Pipeline check failed ({type(error).__name__}). {detail}", file=sys.stderr)

@@ -40,10 +40,11 @@ jobs:
                 Terraform/Azure/tfm-keyvault/examples/complete
                 Terraform/Azure/tfm-keyvault/examples/bootstrap
                 Terraform/Azure/deployments/keyvault
+                Terraform/Azure/deployments/teardown
               )
               ;;
             PRIVATELINK)
-              directories=(Terraform/Azure/tfm-privateLink-network)
+              directories=(Terraform/Azure/tfm-privateLink-network Terraform/Azure/deployments/teardown)
               ;;
             *) printf 'Unknown stack\n' >&2; exit 1 ;;
           esac

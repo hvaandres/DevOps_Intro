@@ -60,8 +60,81 @@ Deployment-specific documentation:
 To request a Key Vault in CI/CD, use **Actions → CI and CD — Key Vault → Run
 workflow**. Select `cyber-dev`, `cyber-tst`, or `cyber-prd` (default), supply the
 vault and existing resource-group names, and leave **dry_run** enabled to preview.
-Vaults deploy only to `westus2`; apply requires **hvaandres** approval.
-See the [request form and administrator setup](Terraform/Azure/tfm-keyvault/README.md#request-a-cyber-key-vault-from-the-actions-form).
+Vaults deploy only to `westus2`; explicitly enable approval checks for the current
+creation workflow. See its [request form and approval caveats](Terraform/Azure/tfm-keyvault/README.md#request-a-vault-with-github-actions).
+
+## Manual state-driven tear down
+**Actions → tear down → Run workflow** is the only trigger: there are no push,
+pull-request, scheduled, or automatic teardown runs. Use `main` and supply:
+- `subscription`: only `cyber-dev` (default), `cyber-tst`, or `cyber-prd`.
+- `resource_group_name`: boundary for **all managed resources in the selected state**.
+- `state_key`: exact existing blob key, e.g. `applications/dev/compute.tfstate`.
+- `dry_run`: defaults **true**; reports drift and proposed destruction without applying.
+- `confirmation`: for actual destruction, type the exact state key and disable dry run.
+
+Storage account is fixed to **`kvstate12790`**; container defaults to `tfstate`.
+The [isolated teardown root](Terraform/Azure/deployments/teardown/providers.tf) has
+no workload modules or variables: Terraform uses state inventory and stored
+dependencies, whether the workload is VMs, networking, Key Vault, or other supported
+AzureRM resources. Only the selected state is destroyed, never the state blob/backend.
+A resource group **is deleted if it is tracked in that state**; the provider blocks
+group deletion when resources remain. Service-level cascading deletion can still
+affect children, so review parent-resource deletions and external consumers carefully.
+
+### One-time administrator setup
+For each subscription, create separate `terraform-cyber-<dev|tst|prd>-teardown-plan`
+and `terraform-cyber-<dev|tst|prd>-teardown` GitHub environments. Protect the latter
+with **hvaandres as sole required reviewer**, exactly one `main` branch rule, no
+administrator bypass, and self-review allowed if operating solo. Teardown has no
+approval-bypass input; even dry runs verify that protection exists.
+
+Set these non-secret variables in **both** environments:
+- `SUBSCRIPTION_ID`, `TENANT_ID`: real UUIDs; Azure display name must match the selected subscription.
+- `PLAN_CLIENT_ID`, `TEARDOWN_CLIENT_ID`: **distinct** OIDC app/client UUIDs.
+- `BACKEND_RESOURCE_GROUP_NAME`: actual group containing `kvstate12790`.
+- `BACKEND_SUBSCRIPTION_ID`: optional backend subscription UUID; defaults to the workload subscription.
+- `BACKEND_CONTAINER`: optional, defaults `tfstate`.
+- `TEARDOWN_ALLOWED_STATE_KEYS`: explicit JSON list, e.g. `["applications/dev/compute.tfstate"]`; no wildcard authorization.
+- `TEARDOWN_ENABLED=true`: only after access and protection are ready; unset disables execution.
+
+Optionally set repository `TEARDOWN_RUNNER_LABELS` to a trusted runner-label JSON
+array (default `["ubuntu-latest"]`). Runners need Azure CLI and access to state,
+Azure APIs, and any private data planes. Federate each app only to its own actual
+job environment; legacy execution subject example:
+`repo:hvaandres/DevOps_Intro:environment:terraform-cyber-dev-teardown`.
+Verify the repository's real OIDC subject format first; use no client secrets or storage keys.
+
+Both identities need scoped state-container **Storage Blob Data Contributor**,
+Reader on the backend account, workload read/data-plane access for refresh, and
+subscription-level `Microsoft.Authorization/locks/read` for inherited-lock checks.
+Only the protected teardown identity gets scoped resource deletion, required
+data-plane deletion, role-assignment deletion, and managed-lock deletion rights.
+Normal deployment identities must not be able to remove protection locks.
+Existing Key Vault deployments gain locks only after a reviewed normal apply.
+
+### Drift and execution rules
+Dry runs report refresh-only drift without writing refreshed state. Actual
+destruction **fails on drift**: investigate and reconcile in the owning deployment,
+then start a new teardown run. After approval, state lineage/serial/content,
+subscription/group, locks, artifact hashes, and live drift are checked again.
+A verification plan must match the approved deletion actions and attributes;
+only the **original saved destroy plan** is applied, never that verification plan.
+This is the reviewable equivalent of `terraform destroy`.
+
+Unsupported providers/aliases, unknown identity formats, cross-group/subscription
+state, missing/empty state, or untracked/inherited locks fail closed. Current
+provider support is default-root AzureRM, ARM IDs, and explicitly validated Key Vault
+key/secret URIs; it is not an arbitrary-provider runner. Add other provider
+configurations/ownership adapters through review. The backend account and its
+containing group are always protected. Purge and common implicit-delete options
+are disabled; some retained disks or soft-deleted objects may need separate lifecycle handling.
+
+Plans are sensitive and retained for **one day** on real runs; dry runs upload no
+plan artifact. Start a fresh run after failure, expiry, drift, or changes to `main`;
+reruns and stale plans are rejected. Repository Azure deployment/teardown runs
+serialize and use Blob leases, but external changes between the final check and
+deletion remain possible. A partial destroy can occur if Azure rejects an operation;
+inspect the updated state and use a fresh run, not manual state deletion.
 
 ## Contribution
 If you would like to contribute to this project, please follow the steps below:

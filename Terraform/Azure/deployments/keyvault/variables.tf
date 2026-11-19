@@ -16,6 +16,24 @@ variable "sku_name" {
   default     = "standard"
 }
 
+variable "purge_protection_enabled" {
+  description = "Enable purge protection; Azure does not allow disabling it once enabled."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "soft_delete_retention_days" {
+  description = "Immutable soft-delete retention in whole days, from 7 to 90."
+  type        = number
+  default     = 90
+  nullable    = false
+  validation {
+    condition     = var.soft_delete_retention_days >= 7 && var.soft_delete_retention_days <= 90 && floor(var.soft_delete_retention_days) == var.soft_delete_retention_days
+    error_message = "soft_delete_retention_days must be an integer from 7 to 90."
+  }
+}
+
 variable "private_endpoints" {
   description = "Existing endpoint subnets and hub-owned private DNS zones. Runner connectivity is configured separately."
   type = map(object({

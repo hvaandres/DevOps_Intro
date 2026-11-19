@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import uuid
 
@@ -20,6 +21,153 @@ STATE_KEYS = {
     "PRIVATELINK": "privatelink-network.tfstate",
 }
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+CYBER_PREFIXES = {
+    "cyber-dev": "CYBER_DEV_KEYVAULT",
+    "cyber-tst": "CYBER_TST_KEYVAULT",
+    "cyber-prd": "CYBER_PRD_KEYVAULT",
+}
+
+
+def object_json(value):
+    document = json.loads(value)
+    if not isinstance(document, dict):
+        raise ValueError("Expected a JSON object")
+    return document
+
+
+def valid_uuid(value):
+    return isinstance(value, str) and str(uuid.UUID(value)) == value.lower() and value != ZERO_UUID
+
+
+def group_name(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_().-]{1,90}", value) or value.endswith("."):
+        raise ValueError("Invalid resource group name")
+    return value
+
+
+def string_tags(value):
+    if not isinstance(value, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in value.items()):
+        raise ValueError("Tags must map strings to strings")
+
+
+def request_values():
+    """Only the dedicated Cyber dispatch path may supply request inputs."""
+    subscription = os.environ.get("CYBER_SUBSCRIPTION", "")
+    raw = os.environ.get("KEYVAULT_REQUEST_JSON", "")
+    if not subscription and not raw:
+        return None
+    if require("STACK") != "KEYVAULT" or subscription not in CYBER_PREFIXES:
+        raise ValueError("Unknown Cyber subscription or unsupported request stack")
+    document = object_json(raw)
+    allowed = {
+        "subscription", "vault_name", "resource_group_name", "sku_name",
+        "purge_protection_enabled", "soft_delete_retention_days",
+        "private_endpoints_json", "role_assignments_json", "tags_json", "dry_run",
+    }
+    if set(document) - allowed or document.get("subscription") != subscription:
+        raise ValueError("Unsupported request fields or mismatched subscription")
+    name = document.get("vault_name")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]", name) or "--" in name:
+        raise ValueError("Invalid Key Vault name")
+    group = group_name(document.get("resource_group_name"))
+    sku = document.get("sku_name", "standard")
+    purge = document.get("purge_protection_enabled", True)
+    retention = document.get("soft_delete_retention_days", 90)
+    dry_run = document.get("dry_run", True)
+    if sku not in ("standard", "premium") or type(purge) is not bool or type(dry_run) is not bool:
+        raise ValueError("Invalid SKU or boolean request fields")
+    if type(retention) not in (int, float) or not 7 <= retention <= 90 or int(retention) != retention:
+        raise ValueError("Retention must be a whole number from 7 to 90")
+    if os.environ.get("DRY_RUN", "true") != ("true" if dry_run else "false"):
+        raise ValueError("Dispatch dry-run setting does not match deployment mode")
+    endpoints = object_json(document.get("private_endpoints_json", "{}"))
+    assignments = object_json(document.get("role_assignments_json", "{}"))
+    tags = object_json(document.get("tags_json", "{}"))
+    string_tags(tags)
+    resource_id = r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/"
+    for endpoint in endpoints.values():
+        fields = {"name", "subnet_id", "resource_group_name", "location", "private_dns_zone_ids", "tags"}
+        if not isinstance(endpoint, dict) or set(endpoint) - fields:
+            raise ValueError("Invalid private endpoint fields")
+        if not isinstance(endpoint.get("name"), str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", endpoint["name"]):
+            raise ValueError("Invalid private endpoint name")
+        if not isinstance(endpoint.get("subnet_id"), str) or not re.fullmatch(
+            resource_id + r"Microsoft.Network/virtualNetworks/[^/]+/subnets/[^/]+", endpoint["subnet_id"], re.I,
+        ):
+            raise ValueError("Private endpoint requires a subnet ARM ID")
+        if "resource_group_name" in endpoint:
+            group_name(endpoint["resource_group_name"])
+        if "location" in endpoint and (
+            not isinstance(endpoint["location"], str) or not re.fullmatch(r"[a-z0-9]+", endpoint["location"])
+        ):
+            raise ValueError("Invalid private endpoint region")
+        zones = endpoint.get("private_dns_zone_ids", [])
+        if not isinstance(zones, list) or any(
+            not isinstance(zone, str) or not re.fullmatch(
+                resource_id + r"Microsoft.Network/privateDnsZones/privatelink\.vaultcore\.azure\.net", zone, re.I,
+            ) for zone in zones
+        ):
+            raise ValueError("Invalid private Key Vault DNS zone ID")
+        string_tags(endpoint.get("tags", {}))
+    for role in assignments.values():
+        fields = {"principal_id", "role_definition_name", "role_definition_id", "principal_type", "skip_service_principal_aad_check"}
+        if not isinstance(role, dict) or set(role) - fields or not valid_uuid(role.get("principal_id")):
+            raise ValueError("Invalid role assignment fields or principal object ID")
+        role_name, role_id = role.get("role_definition_name"), role.get("role_definition_id")
+        if bool(role_name) == bool(role_id):
+            raise ValueError("Specify exactly one role definition name or ID")
+        if role_name and (not isinstance(role_name, str) or not re.fullmatch(r"[A-Za-z0-9 ()_-]{1,128}", role_name)):
+            raise ValueError("Invalid role definition name")
+        if role_id and (not isinstance(role_id, str) or not re.fullmatch(
+            r"/subscriptions/[0-9a-fA-F-]{36}/providers/Microsoft.Authorization/roleDefinitions/[0-9a-fA-F-]{36}", role_id, re.I,
+        )):
+            raise ValueError("Invalid role definition ARM ID")
+        if role.get("principal_type", "ServicePrincipal") not in ("User", "Group", "ServicePrincipal"):
+            raise ValueError("Invalid role principal type")
+        if type(role.get("skip_service_principal_aad_check", False)) is not bool:
+            raise ValueError("Invalid service principal check option")
+    return {
+        "vault_name": name.lower(), "resource_group_name": group, "sku_name": sku,
+        "purge_protection_enabled": purge, "soft_delete_retention_days": int(retention),
+        "private_endpoints": endpoints, "role_assignments": assignments, "tags": tags,
+    }
+
+
+def configure():
+    stack, _ = context()
+    values = request_values()
+    subscription = os.environ.get("CYBER_SUBSCRIPTION", "")
+    prefix = CYBER_PREFIXES[subscription] if values is not None else stack
+    environment = f"keyvault-{subscription}-apply" if values is not None else (
+        "keyvault-apply" if stack == "KEYVAULT" else "privatelink-apply"
+    )
+    with Path(require("GITHUB_OUTPUT")).open("a") as stream:
+        stream.write(f"prefix={prefix}\napply_environment={environment}\n")
+
+
+def azure_preflight():
+    identity()
+    context()
+    values = request_values()
+    if values is None:
+        raise ValueError("Azure request preflight requires a Cyber Key Vault request")
+    subscription_id = require("ARM_SUBSCRIPTION_ID")
+
+    def azure_json(arguments):
+        result = subprocess.run(
+            ["az", *arguments, "--subscription", subscription_id, "--output", "json", "--only-show-errors"],
+            check=True, text=True, capture_output=True, timeout=120,
+        )
+        return object_json(result.stdout)
+
+    account = azure_json(["account", "show"])
+    if account.get("id", "").lower() != subscription_id.lower() or account.get("name", "").lower() != require("CYBER_SUBSCRIPTION"):
+        raise ValueError("Azure subscription does not match the configured Cyber UUID/name")
+    group = azure_json(["group", "show", "--name", values["resource_group_name"]])
+    expected = f"/subscriptions/{subscription_id}/resourceGroups/{values['resource_group_name']}"
+    if group.get("id", "").lower() != expected.lower() or group.get("name", "").lower() != values["resource_group_name"].lower():
+        raise ValueError("Resource group does not belong to the selected Cyber subscription")
+    print("Cyber subscription and existing resource group verified. Vault region: westus2.")
 
 
 def require(name):

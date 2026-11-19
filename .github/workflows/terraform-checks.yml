@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           while IFS= read -r directory; do
             printf 'Initializing Terraform: %s\n' "$directory"
-            terraform -chdir="$directory" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="$directory" init -backend=false -input=false -reconfigure -upgrade
           done < "$RUNNER_TEMP/terraform-directories"
       - name: "4. Terraform validate"
         shell: bash

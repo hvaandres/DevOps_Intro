@@ -41,6 +41,7 @@ env:
   CYBER_SUBSCRIPTION: ${{ inputs.cyber_subscription }}
   KEYVAULT_REQUEST_JSON: ${{ inputs.keyvault_request_json }}
   DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+  REQUIRE_APPROVAL: ${{ inputs.require_approval && 'true' || 'false' }}
   TF_ROOT: ${{ inputs.stack == 'KEYVAULT' && 'Terraform/Azure/deployments/keyvault' || 'Terraform/Azure/tfm-privateLink-network' }}
 
 jobs:

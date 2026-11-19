@@ -67,6 +67,45 @@ class CyberRequestTests(unittest.TestCase):
         self.assertNotIn("location", values)
         self.assertEqual(values["soft_delete_retention_days"], 90)
 
+    def test_approval_control_is_accepted_in_configuration(self):
+        for required in (True, False):
+            with self.subTest(require_approval=required):
+                os.environ["REQUIRE_APPROVAL"] = "true" if required else "false"
+                self.update_request(require_approval=required)
+                pipeline.configure()
+                self.assertIn(
+                    "plan_environment=keyvault-cyber-prd-plan\n",
+                    Path(os.environ["GITHUB_OUTPUT"]).read_text(),
+                )
+                self.assertNotIn("require_approval", pipeline.request_values())
+
+    def test_missing_approval_control_remains_backwards_compatible(self):
+        self.assertNotIn("require_approval", self.request)
+        self.assertNotIn("require_approval", pipeline.request_values())
+
+    def test_approval_control_rejects_non_boolean_values(self):
+        for value in ("true", "false", 1, 0, None, [], {}):
+            with self.subTest(value=value):
+                self.update_request(require_approval=value)
+                with self.assertRaisesRegex(ValueError, "require_approval must be a boolean"):
+                    pipeline.request_values()
+
+    def test_approval_control_must_match_reusable_workflow_input(self):
+        for required in (True, False):
+            with self.subTest(require_approval=required):
+                os.environ["REQUIRE_APPROVAL"] = "false" if required else "true"
+                self.update_request(require_approval=required)
+                with self.assertRaisesRegex(ValueError, "Dispatch approval setting"):
+                    pipeline.configure()
+
+    def test_approval_control_is_not_written_to_terraform_inputs(self):
+        self.update_request(require_approval=True)
+        os.environ["REQUIRE_APPROVAL"] = "true"
+        pipeline.prepare()
+        values = json.loads((self.root / ".pipeline/inputs.tfvars.json").read_text())
+        self.assertNotIn("require_approval", values)
+        self.assertNotIn("dry_run", values)
+
     def test_dispatch_number_input_is_normalized_from_string(self):
         self.update_request(soft_delete_retention_days="90")
         values = pipeline.request_values()
@@ -315,6 +354,14 @@ class CyberWorkflowTests(unittest.TestCase):
         self.assertIn("vars.TENANT_ID", source)
         self.assertIn("vars.SUBSCRIPTION_ID", source)
         self.assertNotIn("CYBER_DEV_KEYVAULT_", source)
+
+    def test_configuration_receives_the_actual_approval_control(self):
+        source = (shared.REPO / ".github/workflows/terraform-deploy.yml").read_text()
+        global_env = source.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0]
+        self.assertIn(
+            "REQUIRE_APPROVAL: ${{ inputs.require_approval && 'true' || 'false' }}",
+            global_env,
+        )
 
     def test_network_resource_requests_require_named_approval_before_pr_creation(self):
         source = (shared.REPO / ".github/workflows/add-resource-privatelink.yml").read_text()

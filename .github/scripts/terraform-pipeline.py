@@ -63,6 +63,7 @@ def request_values():
         "subscription", "vault_name", "resource_group_name", "sku_name",
         "purge_protection_enabled", "soft_delete_retention_days",
         "private_endpoints_json", "role_assignments_json", "tags_json", "dry_run",
+        "require_approval",
     }
     if set(document) - allowed or document.get("subscription") != subscription:
         raise ValueError("Unsupported request fields or mismatched subscription")
@@ -84,12 +85,17 @@ def request_values():
     else:
         raise ValueError("Retention must be a whole number from 7 to 90")
     dry_run = document.get("dry_run", True)
+    require_approval = document.get("require_approval", True)
     if sku not in ("standard", "premium") or type(purge) is not bool or type(dry_run) is not bool:
         raise ValueError("Invalid SKU or boolean request fields")
+    if type(require_approval) is not bool:
+        raise ValueError("require_approval must be a boolean")
     if not 7 <= retention <= 90:
         raise ValueError("Retention must be a whole number from 7 to 90")
     if os.environ.get("DRY_RUN", "true") != ("true" if dry_run else "false"):
         raise ValueError("Dispatch dry-run setting does not match deployment mode")
+    if os.environ.get("REQUIRE_APPROVAL", "true") != ("true" if require_approval else "false"):
+        raise ValueError("Dispatch approval setting does not match deployment mode")
     endpoints = object_json(document.get("private_endpoints_json", "{}"))
     assignments = object_json(document.get("role_assignments_json", "{}"))
     tags = object_json(document.get("tags_json", "{}"))

@@ -79,7 +79,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request' &&
-      (github.event_name == 'workflow_dispatch' || vars.KEYVAULT_DEPLOY_ENABLED == 'true')
+      (github.event_name == 'workflow_dispatch' || vars.DEPLOY_ENABLED == 'true')
     permissions:
       actions: read
       contents: read

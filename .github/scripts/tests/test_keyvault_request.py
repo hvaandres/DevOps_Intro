@@ -68,14 +68,14 @@ class CyberRequestTests(unittest.TestCase):
         self.assertEqual(values["soft_delete_retention_days"], 90)
 
     def test_all_cyber_subscriptions_map_to_fixed_configuration(self):
-        for subscription, prefix in pipeline.CYBER_PREFIXES.items():
+        for subscription, environment in pipeline.CYBER_ENVIRONMENTS.items():
             with self.subTest(subscription=subscription):
                 os.environ["CYBER_SUBSCRIPTION"] = subscription
                 self.update_request(subscription=subscription)
                 pipeline.configure()
                 source = Path(os.environ["GITHUB_OUTPUT"]).read_text()
-                self.assertIn(f"prefix={prefix}\n", source)
-                self.assertIn(f"apply_environment=keyvault-{subscription}-apply\n", source)
+                self.assertIn(f"plan_environment={environment}-plan\n", source)
+                self.assertIn(f"apply_environment={environment}-apply\n", source)
 
     def test_unknown_and_mismatched_subscriptions_fail(self):
         for subscription in ("other-prd", "cyber-prd\nprefix=KEYVAULT", "cyber-dev"):
@@ -181,13 +181,17 @@ class CyberRequestTests(unittest.TestCase):
             self.assertTrue(call.kwargs["check"])
             self.assertNotIn("shell", call.kwargs)
 
-    def test_wrong_account_uuid_or_name_fails_before_group_lookup(self):
+    def test_wrong_account_uuid_fails_before_group_lookup(self):
         for replacement in (
             {"id": os.environ["ARM_CLIENT_ID"], "name": "cyber-prd"},
-            {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "non-cyber"},
+            {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "any Azure display name"},
         ):
-            with self.assertRaises(ValueError):
-                self.preflight([replacement])
+            if replacement["id"] == os.environ["ARM_CLIENT_ID"]:
+                with self.assertRaises(ValueError):
+                    self.preflight([replacement])
+            else:
+                execute = self.preflight([replacement, self.azure_results()[1]])
+                self.assertEqual(execute.call_count, 2)
 
     def test_group_from_another_subscription_is_rejected(self):
         responses = self.azure_results()
@@ -296,6 +300,11 @@ class CyberWorkflowTests(unittest.TestCase):
         self.assertIn("needs.plan.outputs.changed == 'true' && !inputs.dry_run", source)
         self.assertIn("name: ${{ needs.configuration.outputs.apply_environment }}", source)
         self.assertIn("terraform-pipeline.py verify", source)
+        self.assertIn("vars.PLAN_CLIENT_ID", source)
+        self.assertIn("vars.APPLY_CLIENT_ID", source)
+        self.assertIn("vars.TENANT_ID", source)
+        self.assertIn("vars.SUBSCRIPTION_ID", source)
+        self.assertNotIn("CYBER_DEV_KEYVAULT_", source)
 
     def test_network_resource_requests_require_named_approval_before_pr_creation(self):
         source = (shared.REPO / ".github/workflows/add-resource-privatelink.yml").read_text()

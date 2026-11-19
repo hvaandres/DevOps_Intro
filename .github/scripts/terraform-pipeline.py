@@ -21,10 +21,10 @@ STATE_KEYS = {
     "PRIVATELINK": "privatelink-network.tfstate",
 }
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
-CYBER_PREFIXES = {
-    "cyber-dev": "CYBER_DEV_KEYVAULT",
-    "cyber-tst": "CYBER_TST_KEYVAULT",
-    "cyber-prd": "CYBER_PRD_KEYVAULT",
+CYBER_ENVIRONMENTS = {
+    "cyber-dev": "keyvault-cyber-dev",
+    "cyber-tst": "keyvault-cyber-tst",
+    "cyber-prd": "keyvault-cyber-prd",
 }
 
 
@@ -56,7 +56,7 @@ def request_values():
     raw = os.environ.get("KEYVAULT_REQUEST_JSON", "")
     if not subscription and not raw:
         return None
-    if require("STACK") != "KEYVAULT" or subscription not in CYBER_PREFIXES:
+    if require("STACK") != "KEYVAULT" or subscription not in CYBER_ENVIRONMENTS:
         raise ValueError("Unknown Cyber subscription or unsupported request stack")
     document = object_json(raw)
     allowed = {
@@ -137,12 +137,18 @@ def configure():
     stack, _ = context()
     values = request_values()
     subscription = os.environ.get("CYBER_SUBSCRIPTION", "")
-    prefix = CYBER_PREFIXES[subscription] if values is not None else stack
-    environment = f"keyvault-{subscription}-apply" if values is not None else (
-        "keyvault-apply" if stack == "KEYVAULT" else "privatelink-apply"
-    )
+    if values is not None:
+        base_environment = CYBER_ENVIRONMENTS[subscription]
+        plan_environment = f"{base_environment}-plan"
+        apply_environment = f"{base_environment}-apply"
+    else:
+        plan_environment = "keyvault-plan" if stack == "KEYVAULT" else "privatelink-plan"
+        apply_environment = "keyvault-apply" if stack == "KEYVAULT" else "privatelink-apply"
     with Path(require("GITHUB_OUTPUT")).open("a") as stream:
-        stream.write(f"prefix={prefix}\napply_environment={environment}\n")
+        stream.write(
+            f"plan_environment={plan_environment}\n"
+            f"apply_environment={apply_environment}\n"
+        )
 
 
 def azure_preflight():
@@ -161,8 +167,8 @@ def azure_preflight():
         return object_json(result.stdout)
 
     account = azure_json(["account", "show"])
-    if account.get("id", "").lower() != subscription_id.lower() or account.get("name", "").lower() != require("CYBER_SUBSCRIPTION"):
-        raise ValueError("Azure subscription does not match the configured Cyber UUID/name")
+    if account.get("id", "").lower() != subscription_id.lower():
+        raise ValueError("Azure subscription does not match the configured environment SUBSCRIPTION_ID")
     group = azure_json(["group", "show", "--name", values["resource_group_name"]])
     expected = f"/subscriptions/{subscription_id}/resourceGroups/{values['resource_group_name']}"
     if group.get("id", "").lower() != expected.lower() or group.get("name", "").lower() != values["resource_group_name"].lower():

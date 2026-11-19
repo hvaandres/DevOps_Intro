@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      prefix: ${{ steps.configuration.outputs.prefix }}
+      plan_environment: ${{ steps.configuration.outputs.plan_environment }}
       apply_environment: ${{ steps.configuration.outputs.apply_environment }}
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +61,9 @@ jobs:
   plan:
     needs: configuration
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', needs.configuration.outputs.prefix)] || '["self-hosted","linux","azure-terraform"]') }}
+    environment:
+      name: ${{ needs.configuration.outputs.plan_environment }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["self-hosted","linux","azure-terraform"]') }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -71,13 +73,13 @@ jobs:
       changed: ${{ steps.plan.outputs.changed }}
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     env:
-      ARM_CLIENT_ID: ${{ vars[format('{0}_PLAN_CLIENT_ID', needs.configuration.outputs.prefix)] }}
-      ARM_TENANT_ID: ${{ vars[format('{0}_TENANT_ID', needs.configuration.outputs.prefix)] }}
-      ARM_SUBSCRIPTION_ID: ${{ vars[format('{0}_SUBSCRIPTION_ID', needs.configuration.outputs.prefix)] }}
-      BACKEND_ACCOUNT: ${{ vars[format('{0}_BACKEND_ACCOUNT', needs.configuration.outputs.prefix)] }}
-      BACKEND_CONTAINER: ${{ vars[format('{0}_BACKEND_CONTAINER', needs.configuration.outputs.prefix)] }}
-      TFVARS_JSON: ${{ vars[format('{0}_TFVARS_JSON', needs.configuration.outputs.prefix)] }}
-      DEPLOY_ENABLED: ${{ vars[format('{0}_DEPLOY_ENABLED', needs.configuration.outputs.prefix)] }}
+      ARM_CLIENT_ID: ${{ vars.PLAN_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}
+      BACKEND_ACCOUNT: ${{ vars.BACKEND_ACCOUNT }}
+      BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER }}
+      TFVARS_JSON: ${{ vars.TFVARS_JSON }}
+      DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -154,16 +156,16 @@ jobs:
     if: needs.plan.outputs.changed == 'true' && !inputs.dry_run
     environment:
       name: ${{ needs.configuration.outputs.apply_environment }}
-    runs-on: ${{ fromJSON(vars[format('{0}_RUNNER_LABELS', needs.configuration.outputs.prefix)] || '["self-hosted","linux","azure-terraform"]') }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["self-hosted","linux","azure-terraform"]') }}
     timeout-minutes: 45
     permissions:
       actions: read
       contents: read
       id-token: write
     env:
-      ARM_CLIENT_ID: ${{ vars[format('{0}_APPLY_CLIENT_ID', needs.configuration.outputs.prefix)] }}
-      ARM_TENANT_ID: ${{ vars[format('{0}_TENANT_ID', needs.configuration.outputs.prefix)] }}
-      ARM_SUBSCRIPTION_ID: ${{ vars[format('{0}_SUBSCRIPTION_ID', needs.configuration.outputs.prefix)] }}
+      ARM_CLIENT_ID: ${{ vars.APPLY_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}
       EXPECTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.artifact_digest }}
     steps:
       - uses: actions/checkout@v4

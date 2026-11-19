@@ -67,6 +67,11 @@ class CyberRequestTests(unittest.TestCase):
         self.assertNotIn("location", values)
         self.assertEqual(values["soft_delete_retention_days"], 90)
 
+    def test_dispatch_number_input_is_normalized_from_string(self):
+        self.update_request(soft_delete_retention_days="90")
+        values = pipeline.request_values()
+        self.assertEqual(values["soft_delete_retention_days"], 90)
+
     def test_all_cyber_subscriptions_map_to_fixed_configuration(self):
         for subscription, environment in pipeline.CYBER_ENVIRONMENTS.items():
             with self.subTest(subscription=subscription):
@@ -119,7 +124,8 @@ class CyberRequestTests(unittest.TestCase):
             ("sku_name", "free"), ("purge_protection_enabled", "false"),
             ("dry_run", "false"), ("soft_delete_retention_days", True),
             ("soft_delete_retention_days", 6), ("soft_delete_retention_days", 91),
-            ("soft_delete_retention_days", 7.5), ("soft_delete_retention_days", "90"),
+            ("soft_delete_retention_days", 7.5), ("soft_delete_retention_days", "not-a-number"),
+            ("soft_delete_retention_days", "90.5"),
         ):
             with self.subTest(field=field, value=value):
                 original = self.request.copy()

@@ -72,11 +72,21 @@ def request_values():
     group = group_name(document.get("resource_group_name"))
     sku = document.get("sku_name", "standard")
     purge = document.get("purge_protection_enabled", True)
-    retention = document.get("soft_delete_retention_days", 90)
+    retention_value = document.get("soft_delete_retention_days", 90)
+    if isinstance(retention_value, bool):
+        raise ValueError("Retention must be a whole number from 7 to 90")
+    if isinstance(retention_value, int):
+        retention = retention_value
+    elif isinstance(retention_value, float) and retention_value.is_integer():
+        retention = int(retention_value)
+    elif isinstance(retention_value, str) and re.fullmatch(r"[0-9]+", retention_value):
+        retention = int(retention_value)
+    else:
+        raise ValueError("Retention must be a whole number from 7 to 90")
     dry_run = document.get("dry_run", True)
     if sku not in ("standard", "premium") or type(purge) is not bool or type(dry_run) is not bool:
         raise ValueError("Invalid SKU or boolean request fields")
-    if type(retention) not in (int, float) or not 7 <= retention <= 90 or int(retention) != retention:
+    if not 7 <= retention <= 90:
         raise ValueError("Retention must be a whole number from 7 to 90")
     if os.environ.get("DRY_RUN", "true") != ("true" if dry_run else "false"):
         raise ValueError("Dispatch dry-run setting does not match deployment mode")

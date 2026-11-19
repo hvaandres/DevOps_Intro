@@ -16,6 +16,12 @@ ROOTS = {
     "KEYVAULT": "Terraform/Azure/deployments/keyvault",
     "PRIVATELINK": "Terraform/Azure/tfm-privateLink-network",
 }
+
+
+class SubscriptionMismatchError(ValueError):
+    """Safe subscription metadata that can be shown in workflow diagnostics."""
+
+
 STATE_KEYS = {
     "KEYVAULT": "keyvault/deployment.tfstate",
     "PRIVATELINK": "privatelink-network.tfstate",
@@ -183,13 +189,30 @@ def azure_preflight():
         return object_json(result.stdout)
 
     account = azure_json(["account", "show"])
-    if account.get("id", "").lower() != subscription_id.lower():
-        raise ValueError("Azure subscription does not match the configured environment SUBSCRIPTION_ID")
+    selected_subscription = require("CYBER_SUBSCRIPTION")
+    actual_id = account.get("id")
+    if not isinstance(actual_id, str) or actual_id.lower() != subscription_id.lower():
+        raise SubscriptionMismatchError(
+            f"Deployment blocked: Azure subscription ID does not match environment SUBSCRIPTION_ID "
+            f"for workflow_dispatch choice {selected_subscription}."
+        )
+    actual_name = account.get("name")
+    if not isinstance(actual_name, str) or actual_name.casefold() != selected_subscription.casefold():
+        displayed_name = json.dumps(actual_name) if isinstance(actual_name, str) else "<missing>"
+        raise SubscriptionMismatchError(
+            f"Deployment blocked: workflow_dispatch selected {selected_subscription}, but configured "
+            f"subscription {subscription_id} is named {displayed_name} in Azure. Set the selected GitHub "
+            f"environment's SUBSCRIPTION_ID to the intended {selected_subscription} subscription. "
+            "No fallback subscription will be used."
+        )
     group = azure_json(["group", "show", "--name", values["resource_group_name"]])
     expected = f"/subscriptions/{subscription_id}/resourceGroups/{values['resource_group_name']}"
     if group.get("id", "").lower() != expected.lower() or group.get("name", "").lower() != values["resource_group_name"].lower():
         raise ValueError("Resource group does not belong to the selected Cyber subscription")
-    print("Cyber subscription and existing resource group verified. Vault region: westus2.")
+    print(
+        f"Verified workflow_dispatch subscription {selected_subscription} ({subscription_id}) "
+        f"and resource group {values['resource_group_name']}. Vault region: westus2."
+    )
 
 
 def require(name):
@@ -373,7 +396,8 @@ def main():
             "azure-preflight": "Verify the selected Cyber subscription UUID/display name, existing resource-group membership, Azure access, and connectivity.",
             "summarize": "The plan could not be reviewed; Cyber requests must not delete or replace a vault.",
         }.get(sys.argv[1] if len(sys.argv) > 1 else "", "Check required settings, enable flags, and artifact provenance.")
-        print(f"::error::Pipeline check failed ({type(error).__name__}). {hint}", file=sys.stderr)
+        detail = str(error) if isinstance(error, SubscriptionMismatchError) else hint
+        print(f"::error::Pipeline check failed ({type(error).__name__}). {detail}", file=sys.stderr)
         sys.exit(1)
 
 

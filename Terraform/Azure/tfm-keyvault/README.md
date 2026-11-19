@@ -150,7 +150,7 @@ The vault's region is fixed in the deployment wrapper to **`westus2`**, not
 inferred from the resource group's metadata region. This is an Azure region, not
 an availability-zone number. RBAC remains enabled, public access is disabled,
 and the firewall remains deny-by-default. Tenant/identity/backend information is
-resolved from trusted repository variables, never entered into the form.
+resolved from the selected GitHub environment's variables, never entered into the form.
 The request does not create keys, secret values, certificates, or service
 principals. Empty endpoint settings leave a private-only vault unreachable until
 private connectivity is configured. Endpoint location, if supplied, must match
@@ -165,6 +165,16 @@ fail before backend initialization or planning. A group in `cyber-dev` must be
 requested with `cyber-dev` selected; the pipeline never silently switches to a
 different subscription. Subscription display names must be exactly `cyber-dev`,
 `cyber-tst`, and `cyber-prd` (case-insensitive). Access is rechecked after approval.
+
+The dispatch choices are **actual Azure subscription names**, not aliases for
+arbitrary UUIDs. For example, selecting `cyber-prd` while its GitHub environment
+points at a subscription named `Azure subscription 1` fails with
+`Deployment blocked: workflow_dispatch selected cyber-prd...`.
+Preflight reports the selected name, configured UUID, and actual Azure name.
+It stops before backend initialization/planning, and runs again before apply.
+The resource group's returned ARM ID must belong to the same verified
+subscription. These checks also apply to dry runs and when `require_approval` is
+false; no alternative subscription is searched or selected automatically.
 
 #### Dry run, then deploy
 1. Submit the form with `dry_run=true`. Inspect the Terraform summary for **create**,
@@ -199,38 +209,42 @@ Do not move existing resources into this workflow without a reviewed state
 migration/import. The request path rejects plans that delete or replace a vault;
 moving its resource group or changing immutable settings requires separate review.
 
-#### Cyber repository variables
-Set **repository-level Actions variables** for each prefix:
+#### Cyber GitHub environment variables
+Configure each GitHub environment under **Settings → Environments**:
 
-- `cyber-dev` → `CYBER_DEV_KEYVAULT`
-- `cyber-tst` → `CYBER_TST_KEYVAULT`
-- `cyber-prd` → `CYBER_PRD_KEYVAULT`
+- `cyber-dev` → `keyvault-cyber-dev-plan`
+- `cyber-tst` → `keyvault-cyber-tst-plan`
+- `cyber-prd` → `keyvault-cyber-prd-plan`
 
-For each prefix configure:
+The current configuration uses that environment for both plan and apply.
+For each environment configure these **non-secret environment variables**:
 
-- `<PREFIX>_SUBSCRIPTION_ID`: the corresponding real Cyber subscription UUID.
-- `<PREFIX>_TENANT_ID`: Entra tenant UUID.
-- `<PREFIX>_PLAN_CLIENT_ID` and `<PREFIX>_APPLY_CLIENT_ID`: OIDC app/client UUIDs.
-- `<PREFIX>_BACKEND_ACCOUNT` and `<PREFIX>_BACKEND_CONTAINER`: pre-existing state
+- `SUBSCRIPTION_ID`: UUID of the actual Azure subscription whose display name
+  matches the dispatch choice. Reusing a dev or unrelated UUID under the
+  production environment is not a supported alias and is rejected.
+- `TENANT_ID`: Entra tenant UUID.
+- `PLAN_CLIENT_ID` and `APPLY_CLIENT_ID`: OIDC app/client UUIDs.
+- `BACKEND_ACCOUNT` and `BACKEND_CONTAINER`: pre-existing state
   account/container names.
-- `<PREFIX>_RUNNER_LABELS`: optional runner-label JSON array, default
-  `["self-hosted","linux","azure-terraform"]`. Cyber runners also need Azure CLI.
-- `<PREFIX>_DEPLOY_ENABLED`: literal `true` after setup, including for dry runs.
+- `RUNNER_LABELS`: optional runner-label JSON array, default
+  `["ubuntu-latest"]`. Cyber runners also need Azure CLI.
+- `DEPLOY_ENABLED`: literal `true` after setup, including for dry runs.
 
-For example, the production UUID variable is
-`CYBER_PRD_KEYVAULT_SUBSCRIPTION_ID`. These mappings are intentionally not guessed
-from subscription names. No Cyber UUIDs are committed. The Cyber form does **not**
-use `KEYVAULT_TFVARS_JSON` or a `<PREFIX>_TFVARS_JSON`; form inputs are authoritative.
-Do not override shared identity/subscription settings at environment scope.
+For production, set `SUBSCRIPTION_ID` inside `keyvault-cyber-prd-plan`; the current
+workflow does not read prefixed `CYBER_PRD_KEYVAULT_*` variables. No Cyber UUIDs
+are hardcoded. The Cyber form's vault inputs are authoritative, not `TFVARS_JSON`.
+Verify environment-scoped identity/subscription values before enabling deployment.
 Reader on the target subscription/group must let the planning identity verify
 membership; apply needs workload Contributor plus the narrowly scoped rights
 required by the requested RBAC/endpoints. Both identities need state-container
 Storage Blob Data Contributor. Neither command grants itself permissions.
 
-Use the OIDC setup below, with the repository's `main` subject for planning and
-the corresponding protected-environment subject for applying, for example
-`repo:hvaandres/DevOps_Intro:environment:keyvault-cyber-prd-apply` when using legacy
-GitHub subject formatting. Check actual repository OIDC subject configuration.
+Use OIDC trust matching the **actual job environment** for both identities, for
+example `repo:hvaandres/DevOps_Intro:environment:keyvault-cyber-prd-plan` with
+legacy GitHub subject formatting. Check the latest workflow's subject claim:
+repositories using immutable subjects also include numeric owner/repository IDs.
+The branch restriction remains `main`, but an environment-based subject is not
+the same as a branch-based subject.
 
 #### JSON field examples
 `private_endpoints_json`:

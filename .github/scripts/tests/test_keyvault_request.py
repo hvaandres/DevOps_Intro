@@ -227,16 +227,64 @@ class CyberRequestTests(unittest.TestCase):
             self.assertNotIn("shell", call.kwargs)
 
     def test_wrong_account_uuid_fails_before_group_lookup(self):
-        for replacement in (
-            {"id": os.environ["ARM_CLIENT_ID"], "name": "cyber-prd"},
-            {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "any Azure display name"},
-        ):
-            if replacement["id"] == os.environ["ARM_CLIENT_ID"]:
-                with self.assertRaises(ValueError):
+        replacement = {"id": os.environ["ARM_CLIENT_ID"], "name": "cyber-prd"}
+        with self.assertRaises(pipeline.SubscriptionMismatchError):
+            self.preflight([replacement])
+
+    def test_wrong_account_name_is_rejected_even_when_uuid_matches(self):
+        for actual_name in ("cyber-dev", "cyber-tst", "Azure subscription 1", "cyber-prd-copy", "", None):
+            with self.subTest(actual_name=actual_name):
+                replacement = {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": actual_name}
+                with self.assertRaisesRegex(pipeline.SubscriptionMismatchError, "workflow_dispatch selected cyber-prd"):
                     self.preflight([replacement])
-            else:
-                execute = self.preflight([replacement, self.azure_results()[1]])
+
+    def test_every_dispatch_choice_requires_the_actual_subscription_name(self):
+        for selected in pipeline.CYBER_ENVIRONMENTS:
+            with self.subTest(subscription=selected):
+                os.environ["CYBER_SUBSCRIPTION"] = selected
+                self.update_request(subscription=selected)
+                execute = self.preflight()
                 self.assertEqual(execute.call_count, 2)
+                wrong = "cyber-tst" if selected != "cyber-tst" else "cyber-prd"
+                with self.assertRaises(pipeline.SubscriptionMismatchError):
+                    self.preflight([{"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": wrong}])
+
+    def test_subscription_name_matching_is_case_insensitive(self):
+        responses = self.azure_results()
+        responses[0]["name"] = "CYBER-PRD"
+        self.assertEqual(self.preflight(responses).call_count, 2)
+
+    def test_subscription_name_mismatch_stops_before_group_lookup(self):
+        account = {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "Azure subscription 1"}
+        with patch.object(pipeline.subprocess, "run", return_value=SimpleNamespace(
+            stdout=json.dumps(account),
+        )) as execute:
+            with self.assertRaises(pipeline.SubscriptionMismatchError):
+                pipeline.azure_preflight()
+        self.assertEqual(execute.call_count, 1)
+        self.assertEqual(execute.call_args.args[0][1:3], ["account", "show"])
+
+    def test_subscription_mismatch_cannot_be_bypassed_by_disabling_approval(self):
+        os.environ["REQUIRE_APPROVAL"] = "false"
+        os.environ["DRY_RUN"] = "false"
+        self.update_request(require_approval=False, dry_run=False)
+        account = {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "Azure subscription 1"}
+        with self.assertRaises(pipeline.SubscriptionMismatchError):
+            self.preflight([account])
+
+    def test_subscription_mismatch_is_actionable_in_workflow_error(self):
+        account = {"id": os.environ["ARM_SUBSCRIPTION_ID"], "name": "Azure subscription 1"}
+        errors = io.StringIO()
+        with patch.object(pipeline.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(account))):
+            with patch("sys.argv", ["terraform-pipeline.py", "azure-preflight"]), contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as exited:
+                    pipeline.main()
+        self.assertEqual(exited.exception.code, 1)
+        message = errors.getvalue()
+        self.assertIn("workflow_dispatch selected cyber-prd", message)
+        self.assertIn("Azure subscription 1", message)
+        self.assertIn("SUBSCRIPTION_ID", message)
+        self.assertIn("No fallback subscription", message)
 
     def test_group_from_another_subscription_is_rejected(self):
         responses = self.azure_results()
@@ -346,6 +394,9 @@ class CyberWorkflowTests(unittest.TestCase):
         self.assertNotIn('["self-hosted","linux","azure-terraform"]', source)
         self.assertLess(source.index("terraform-pipeline.py prepare"), source.index("uses: azure/login@v2"))
         self.assertLess(source.index("terraform-pipeline.py azure-preflight"), source.index("init -input=false"))
+        apply = source.split("\n  apply:\n", 1)[1]
+        self.assertLess(apply.index("terraform-pipeline.py azure-preflight"), apply.index("init -input=false"))
+        self.assertLess(apply.index("terraform-pipeline.py azure-preflight"), apply.index("apply -input=false"))
         self.assertIn("needs.plan.outputs.changed == 'true' && !inputs.dry_run", source)
         self.assertIn("name: ${{ needs.configuration.outputs.apply_environment }}", source)
         self.assertIn("terraform-pipeline.py verify", source)
